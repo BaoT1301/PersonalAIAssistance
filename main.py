@@ -1,64 +1,54 @@
 from dotenv import load_dotenv
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+from langchain_openai import ChatOpenAI
 from langchain_anthropic import ChatAnthropic
-from langchain.agents import create_agent
-from tools import tools
+from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain.agents import create_tool_calling_agent, AgentExecutor
+from tools import search_tool, wiki_tool, save_tool
 
 load_dotenv()
 
-
 class ResearchResponse(BaseModel):
-    """Structured response for research output."""
-    topic: str = Field(description="The research topic")
-    summary: str = Field(description="Summary of the research findings")
-    sources: list[str] = Field(description="List of sources used")
-    tools_used: list[str] = Field(description="List of tools used during research")
+    topic: str
+    summary: str
+    sources: list[str]
+    tools_used: list[str]
+    
 
+llm = ChatAnthropic(model="claude-sonnet-4-20250514")
+parser = PydanticOutputParser(pydantic_object=ResearchResponse)
 
-# Initialize the model with structured output support
-llm = ChatAnthropic(model="claude-sonnet-4-20250514", temperature=0.7)
+prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            """
+            You are a research assistant that will help generate a research paper.
+            Answer the user query and use neccessary tools. 
+            Wrap the output in this format and provide no other text\n{format_instructions}
+            """,
+        ),
+        ("placeholder", "{chat_history}"),
+        ("human", "{query}"),
+        ("placeholder", "{agent_scratchpad}"),
+    ]
+).partial(format_instructions=parser.get_format_instructions())
 
-# Create system prompt
-system_prompt = """
-You are a research assistant that helps generate comprehensive research papers.
-Follow these steps:
-1. Analyze the user's research topic
-2. Use the search_web tool to find current information
-3. Use the wikipedia tool for background/historical information
-4. Summarize your findings in a clear, structured format
-5. Save the final research to a file using the save_to_txt tool
-
-Always structure your final response as JSON with these fields:
-- topic: The research topic
-- summary: A comprehensive summary of findings (3-5 paragraphs)
-- sources: List of sources you referenced
-- tools_used: List of tools you used (e.g., ["search_web", "wikipedia", "save_to_txt"])
-
-Be thorough, objective, and cite your sources clearly.
-"""
-
-# Create the agent using the new syntax
-agent = create_agent(
-    model=llm,
-    tools=tools,
-    system_prompt=system_prompt
+tools = [search_tool, wiki_tool, save_tool]
+agent = create_tool_calling_agent(
+    llm=llm,
+    prompt=prompt,
+    tools=tools
 )
 
-# Main execution
-if __name__ == "__main__":
-    query = input("Enter your research topic: ")
-    
-    print("\n🔍 Starting research...\n")
-    
-    # Stream the agent's responses
-    for chunk in agent.stream(
-        {"messages": [{"role": "user", "content": query}]},
-        stream_mode="values"
-    ):
-        # Print the latest message
-        if chunk.get("messages"):
-            last_message = chunk["messages"][-1]
-            if hasattr(last_message, 'content') and last_message.content:
-                print(f"\n{last_message.content}")
-    
-    print("\n✅ Research completed!")
+agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+query = input("Enter your research topic: ")
+response = agent_executor.invoke(
+    {"query": query}
+)
+try:
+    structured_response = parser.parse(response.get("output")[0]["text"])
+    print(structured_response)
+except Exception as e:
+    print("Failed to parse response:", e, "Response was:", response)

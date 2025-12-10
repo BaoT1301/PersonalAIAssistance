@@ -1,21 +1,9 @@
-from langchain_core.tools import tool
-from langchain_community.tools import WikipediaQueryRun
-from langchain_community.utilities import WikipediaAPIWrapper, DuckDuckGoSearchAPIWrapper
-from langchain_community.tools import DuckDuckGoSearchRun
+from langchain_community.tools import WikipediaQueryRun, DuckDuckGoSearchRun
+from langchain_community.utilities import WikipediaAPIWrapper
+from langchain.tools import Tool
 from datetime import datetime
 
-
-@tool
-def save_to_txt(data: str, filename: str = "research_output.txt") -> str:
-    """Saves structured research data to a text file.
-    
-    Args:
-        data: The research data to save
-        filename: The name of the file to save to (default: research_output.txt)
-    
-    Returns:
-        A confirmation message with the filename
-    """
+def save_to_txt(data: str, filename: str = "research_output.txt"):
     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     formatted_text = f"--- Research Output ---\nTimestamp: {timestamp}\n\n{data}\n\n"
 
@@ -24,24 +12,18 @@ def save_to_txt(data: str, filename: str = "research_output.txt") -> str:
     
     return f"Data successfully saved to {filename}"
 
+save_tool = Tool(
+    name="save_text_to_file",
+    func=save_to_txt,
+    description="Saves structured research data to a text file.",
+)
 
-@tool
-def search_web(query: str) -> str:
-    """Search the web for information using DuckDuckGo.
-    
-    Args:
-        query: The search query
-        
-    Returns:
-        Search results as a string
-    """
-    search = DuckDuckGoSearchRun(api_wrapper=DuckDuckGoSearchAPIWrapper())
-    return search.run(query)
+search = DuckDuckGoSearchRun()
+search_tool = Tool(
+    name="search",
+    func=search.run,
+    description="Search the web for information",
+)
 
-
-# Wikipedia tool setup
-api_wrapper = WikipediaAPIWrapper(top_k_results=1, doc_content_chars_max=1000)
+api_wrapper = WikipediaAPIWrapper(top_k_results=1, doc_content_charts_max=100)
 wiki_tool = WikipediaQueryRun(api_wrapper=api_wrapper)
-
-# Export all tools as a list for easy import
-tools = [save_to_txt, search_web, wiki_tool]
