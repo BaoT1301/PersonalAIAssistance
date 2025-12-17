@@ -37,7 +37,10 @@ prompt = ChatPromptTemplate.from_messages(
     ]
 ).partial(format_instructions=parser.get_format_instructions())
 
+# Give the AI these tools to use
 tools = [search_tool, wiki_tool, save_tool]
+
+# Create the AI agent that can use tools
 agent = create_tool_calling_agent(
     llm=llm,
     prompt=prompt,
@@ -45,6 +48,8 @@ agent = create_tool_calling_agent(
 )
 
 agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
+
+# USER INTERFACE
 print("🔍 AI Research Assistant")
 print("=" * 50)
 
@@ -76,16 +81,21 @@ print("📊 RESULTS")
 print("=" * 50 + "\n")
 
 try:
+    # Get the AI's response
     output = response.get("output")
 
+    # Sometimes the response is wrapped in a list, unwrap it
     if isinstance(output, list) and len(output) > 0:
         output = output[0].get("text", output[0])
-    
+   
+    # Clean up the text
     if isinstance(output, str):
         output = output.strip()
+        # Remove code block markers if they exist       
         if output.startswith("```json"):
             output = output.replace("```json", "").replace("```", "").strip()
-    
+
+    # Convert text to our structured format
     structured_response = parser.parse(output)
     
     print(f"📌 TOPIC: {structured_response.topic}\n")
