@@ -7,6 +7,7 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
+  const API_URL = import.meta.env.VITE_API_URL || ''
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -26,7 +27,7 @@ function App() {
     setResult(null)
 
     try {
-      const response = await axios.post('/api/research', {
+      const response = await axios.post('${API_URL}/api/research', {
         query: query.trim()
       })
 
@@ -170,7 +171,7 @@ function App() {
             <div className="feature-grid">
               <div className="feature">
                 <div className="feature-icon">⚡</div>
-                <div className="feature-text">Instant Results</div>
+                <div className="feature-text">Fast Results</div>
               </div>
               <div className="feature">
                 <div className="feature-icon">🌐</div>
