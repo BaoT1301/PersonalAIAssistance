@@ -7,7 +7,7 @@ function App() {
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
-  const API_URL = import.meta.env.VITE_API_URL || ''
+  const API_URL = import.meta.env.VITE_API_URL || 'https://fusionai-backend-suul.onrender.com'
 
   const handleSubmit = async (e) => {
     e.preventDefault()
@@ -27,7 +27,7 @@ function App() {
     setResult(null)
 
     try {
-      const response = await axios.post('${API_URL}/api/research', {
+      const response = await axios.post(`${API_URL}/api/research`, {
         query: query.trim()
       })
 
