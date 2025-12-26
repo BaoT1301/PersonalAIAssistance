@@ -13,7 +13,11 @@ load_dotenv()
 
 # Initialize Flask application
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins=[
+    "http://localhost:3000",  
+    "https://fusion-ai-alpha.vercel.app",  
+    "https://*.vercel.app"  
+])
 
 class ResearchResponse(BaseModel):
     topic: str
