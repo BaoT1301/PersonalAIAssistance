@@ -140,8 +140,12 @@ def research():
         print(f"Error: {str(e)}")
         return jsonify({"error": f"An error occurred: {str(e)}"}), 500
 
+
 if __name__ == '__main__':
+    # Get port from environment variable, default to 5000
     port = int(os.getenv('PORT', 5000))
+    # Print startup messages
     print(f"\n🚀 Server starting on http://localhost:{port}")
     print(f"📍 Test health check: http://localhost:{port}/api/health\n")
+    # Start Flask server (host, port, debug mode)    
     app.run(host='0.0.0.0', port=port, debug=True)
