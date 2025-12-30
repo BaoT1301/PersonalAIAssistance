@@ -86,11 +86,13 @@ tools = [search_tool, wiki_tool, save_tool]
 agent = create_tool_calling_agent(llm=llm, prompt=prompt, tools=tools)
 agent_executor = AgentExecutor(agent=agent, tools=tools, verbose=True)
 
+# Health check endpoint - GET /api/health
 @app.route('/api/health', methods=['GET'])
 def health_check():
     """Health check endpoint"""
     return jsonify({"status": "healthy", "message": "FusionAI API is running"}), 200
 
+# Research endpoint - POST /api/research with {"query": "topic"}
 @app.route('/api/research', methods=['POST'])
 def research():
     """Main research endpoint"""
