@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import axios from 'axios'
+import { Analytics } from '@vercel/analytics/react'
 import './App.css'
 
 // Smart API URL detection
@@ -303,6 +304,8 @@ function App() {
           </div>
         )}
       </main>
+
+      <Analytics />
     </div>
   )
 }
