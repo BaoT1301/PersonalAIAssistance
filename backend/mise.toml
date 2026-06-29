@@ -1,0 +1,8 @@
+[tools]
+python = "3.12.8"
+
+[settings]
+# The build host's mise can't fetch GitHub artifact attestations for the
+# prebuilt CPython, which aborts the install. Skip attestation verification so
+# the Python toolchain installs during deploy.
+python.github_attestations = false
