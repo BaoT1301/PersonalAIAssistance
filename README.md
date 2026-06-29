@@ -15,7 +15,7 @@
 
 ## What is FusionAI?
 
-FusionAI combines **Wikipedia**, **DuckDuckGo web search**, and **Anthropic Claude** into a single research assistant that synthesizes multi-source answers in seconds. Ask anything — it finds, verifies, and explains it in plain language with cited sources.
+FusionAI combines **Wikipedia**, **DuckDuckGo web search**, and **OpenAI GPT-4o mini** into a single research assistant that synthesizes multi-source answers in seconds. Ask anything — it finds, verifies, and explains it in plain language with cited sources.
 
 - Conversational interface with full session history
 - Smart intent detection — skips search for greetings, only fetches when needed
@@ -37,7 +37,7 @@ FusionAI combines **Wikipedia**, **DuckDuckGo web search**, and **Anthropic Clau
 ![Python](https://img.shields.io/badge/Python_3.12-3776AB?style=for-the-badge&logo=python&logoColor=white)
 ![FastAPI](https://img.shields.io/badge/FastAPI-009688?style=for-the-badge&logo=fastapi&logoColor=white)
 ![LangChain](https://img.shields.io/badge/LangChain-1C3C3C?style=for-the-badge&logo=langchain&logoColor=white)
-![Anthropic](https://img.shields.io/badge/Claude_Sonnet-D97757?style=for-the-badge&logo=anthropic&logoColor=white)
+![OpenAI](https://img.shields.io/badge/GPT--4o_mini-412991?style=for-the-badge&logo=openai&logoColor=white)
 
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-4169E1?style=for-the-badge&logo=postgresql&logoColor=white)
 ![SQLAlchemy](https://img.shields.io/badge/SQLAlchemy-D71F00?style=for-the-badge&logo=sqlalchemy&logoColor=white)
@@ -49,8 +49,8 @@ FusionAI combines **Wikipedia**, **DuckDuckGo web search**, and **Anthropic Clau
 | Layer | Technology |
 |-------|------------|
 | Frontend | React 18 · Vite 5 · Tailwind CSS v4 · Framer Motion |
-| Backend | Python 3.12 · FastAPI · LangChain · Anthropic Claude |
-| AI Model | claude-sonnet-4-6 via LangChain `prompt \| llm` chain |
+| Backend | Python 3.12 · FastAPI · LangChain · OpenAI |
+| AI Model | gpt-4o-mini via LangChain `prompt \| llm` chain (streamed) |
 | Database | PostgreSQL (Railway) · SQLite fallback for local dev |
 | ORM | SQLAlchemy 2.x · Alembic migrations · psycopg2-binary |
 | Cache | Redis (optional) · in-memory fallback |
@@ -101,13 +101,13 @@ The Vite dev server proxies `/api/*` to `localhost:5001` automatically. No `VITE
 
 ```env
 # Required
-ANTHROPIC_API_KEY=your_key_here
+OPENAI_API_KEY=your_key_here
 DATABASE_URL=postgresql://user:password@host:5432/dbname
 ENVIRONMENT=production
 FRONTEND_ORIGINS=https://www.fusionai.studio,https://your-app.vercel.app
 
 # AI
-ANTHROPIC_MODEL=claude-sonnet-4-6
+OPENAI_MODEL=gpt-4o-mini
 MAX_TOKENS=2000
 
 # Database
@@ -218,7 +218,7 @@ FusionAI/
 │   ├── models.py               # ORM models (Session, Message, Result, Source, Document)
 │   ├── schemas.py              # Pydantic request/response schemas
 │   ├── services/
-│   │   ├── ai.py               # LangChain chain + Claude integration (cached)
+│   │   ├── ai.py               # LangChain chain + OpenAI integration (cached, streamed)
 │   │   ├── sources.py          # Wikipedia + DuckDuckGo + intent detection
 │   │   ├── research.py         # Research orchestration + session handling
 │   │   ├── sessions.py         # Session CRUD + message history
@@ -253,7 +253,7 @@ cd backend
 python -m pytest tests
 ```
 
-Tests use SQLite and disable live source lookup — no Anthropic key or network access required.
+Tests use SQLite and disable live source lookup — no OpenAI key or network access required.
 
 ---
 

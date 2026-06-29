@@ -118,7 +118,7 @@ const DEMO_EXAMPLES = [
   {
     query: 'How does quantum entanglement work?',
     summary: 'Quantum entanglement is a phenomenon where two particles become correlated so that the quantum state of one instantly influences the other — regardless of the distance between them.',
-    sources: ['Wikipedia', 'Claude AI', 'Web Search'],
+    sources: ['Wikipedia', 'GPT-4o mini', 'Web Search'],
   },
   {
     query: 'What caused the 2008 financial crisis?',
@@ -128,22 +128,22 @@ const DEMO_EXAMPLES = [
   {
     query: 'Explain CRISPR gene editing in simple terms',
     summary: 'CRISPR-Cas9 acts like molecular scissors — it uses a guide RNA to find a specific DNA sequence, then the Cas9 protein cuts it, allowing scientists to delete, repair, or insert genes with precision.',
-    sources: ['Wikipedia', 'Claude AI', 'Web Search'],
+    sources: ['Wikipedia', 'GPT-4o mini', 'Web Search'],
   },
   {
     query: 'Why is the sky blue?',
     summary: 'Sunlight contains all colors of the spectrum. Earth\'s atmosphere scatters shorter blue wavelengths more than red ones (Rayleigh scattering), so the sky appears blue to our eyes during the day.',
-    sources: ['Wikipedia', 'Claude AI'],
+    sources: ['Wikipedia', 'GPT-4o mini'],
   },
   {
     query: 'How does the human immune system fight viruses?',
     summary: 'When a virus enters the body, innate immunity responds first with inflammation. Then adaptive immunity kicks in — B cells produce antibodies while T cells destroy infected cells, forming long-term memory.',
-    sources: ['Wikipedia', 'Claude AI', 'Web Search'],
+    sources: ['Wikipedia', 'GPT-4o mini', 'Web Search'],
   },
   {
     query: 'What is machine learning and how does it work?',
     summary: 'Machine learning is a branch of AI where models learn patterns from data rather than following explicit rules. Neural networks adjust millions of internal weights during training to minimize prediction error.',
-    sources: ['Wikipedia', 'Claude AI', 'Web Search'],
+    sources: ['Wikipedia', 'GPT-4o mini', 'Web Search'],
   },
 ]
 
@@ -298,7 +298,7 @@ function HeroSection() {
             initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.55, delay: 0.38 }}
             className="text-lg md:text-xl text-on-surface-variant max-w-lg mb-10 leading-relaxed">
-            FusionAI combines Wikipedia, web search, and Claude AI to synthesize multi-source answers in seconds.
+            FusionAI combines Wikipedia, web search, and GPT-4o mini to synthesize multi-source answers in seconds.
           </motion.p>
           <motion.div
             initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
@@ -337,7 +337,7 @@ function SourcesStrip() {
       <div className="max-w-7xl mx-auto px-8">
         <p className="text-center text-[10px] font-bold tracking-[0.2em] uppercase text-slate-500 mb-6">Powered by</p>
         <div className="flex flex-wrap justify-center items-center gap-10 md:gap-20 opacity-40 grayscale contrast-125">
-          {['Wikipedia', 'Claude AI', 'DuckDuckGo', 'LangChain', 'FastAPI'].map((n, i) => (
+          {['Wikipedia', 'GPT-4o mini', 'DuckDuckGo', 'LangChain', 'FastAPI'].map((n, i) => (
             <motion.span
               key={n}
               initial={{ opacity: 0, y: 10 }}
@@ -378,7 +378,7 @@ function FeatureGrid() {
             <Icon name="travel_explore" className="text-primary text-4xl" />
             <div>
               <h3 className="text-3xl font-bold tracking-tight mb-4 text-slate-50">Multi-Source Search</h3>
-              <p className="text-on-surface-variant text-lg leading-relaxed">Every query hits Wikipedia, the open web, and Claude AI simultaneously — then synthesizes a single coherent answer.</p>
+              <p className="text-on-surface-variant text-lg leading-relaxed">Every query hits Wikipedia, the open web, and GPT-4o mini simultaneously — then synthesizes a single coherent answer.</p>
             </div>
           </motion.div>
           <motion.div
@@ -482,7 +482,7 @@ function Footer() {
     <footer className="w-full py-10 px-8 bg-slate-950 border-t border-slate-900 text-sm">
       <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
         <span className="text-lg font-black text-slate-100">FusionAI</span>
-        <p className="text-slate-500 text-xs text-center">Built with React · FastAPI · LangChain · Claude AI</p>
+        <p className="text-slate-500 text-xs text-center">Built with React · FastAPI · LangChain · GPT-4o mini</p>
         <p className="text-slate-600 text-xs">© 2025 FusionAI</p>
       </div>
     </footer>
@@ -599,7 +599,7 @@ function formatRelativeTime(dateStr) {
 const LOADING_STEPS = [
   'Searching Wikipedia...',
   'Scanning the web...',
-  'Synthesizing with Claude AI...',
+  'Synthesizing with GPT-4o mini...',
   'Compiling your answer...',
 ]
 
@@ -610,7 +610,7 @@ const TOPIC_CARDS = [
 ]
 
 function toolDisplayName(tool) {
-  const map = { wikipedia: 'Wikipedia', duckduckgo_search: 'Web Search', web_search: 'Web Search', claude_ai: 'Claude AI', claude: 'Claude AI' }
+  const map = { wikipedia: 'Wikipedia', duckduckgo_search: 'Web Search', web_search: 'Web Search', openai: 'GPT-4o mini', gpt: 'GPT-4o mini' }
   return map[tool.toLowerCase()] || tool
 }
 
@@ -861,7 +861,7 @@ function NewResearchView({ onSubmit, isLoading, documents, onUpload, onRemoveDoc
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.55, delay: 0.15, ease: 'easeOut' }}
             className="text-lg max-w-xl mx-auto" style={{ color: '#cbc3d7', fontFamily: 'Inter, sans-serif' }}>
-            Harness AI to synthesize information from Wikipedia, the web, and Claude — all at once.
+            Harness AI to synthesize information from Wikipedia, the web, and GPT — all at once.
           </motion.p>
         </div>
 
@@ -1461,7 +1461,7 @@ function SettingsView() {
         <Section title="About">
           <SettingRow label="App" value="FusionAI Research" />
           <SettingRow label="Version" value={health ? `v${health.version}` : 'v2.1.0'} />
-          <SettingRow label="AI Model" value="Claude AI" />
+          <SettingRow label="AI Model" value="GPT-4o mini" />
           <SettingRow label="Built with" value="React · FastAPI · LangChain" />
         </Section>
       </div>
