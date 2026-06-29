@@ -44,3 +44,82 @@
     background: linear-gradient(135deg, #8B5CF6 0%, #7C3AED 100%);
   }
 }
+
+/* ─── Rendered Markdown answers (Claude/ChatGPT-style) ─────────────────────── */
+.fusion-md {
+  color: #cbc3d7;
+  font-family: 'Inter', sans-serif;
+  font-size: 0.875rem;
+  line-height: 1.7;
+}
+.fusion-md > :first-child { margin-top: 0; }
+.fusion-md > :last-child { margin-bottom: 0; }
+.fusion-md p { margin: 0 0 0.85rem; }
+.fusion-md strong { color: #dae2fd; font-weight: 700; }
+.fusion-md em { color: #d6cfe2; }
+.fusion-md a {
+  color: #d0bcff;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.fusion-md a:hover { color: #e2d4ff; }
+.fusion-md h1,
+.fusion-md h2,
+.fusion-md h3 {
+  color: #dae2fd;
+  font-family: 'Manrope', sans-serif;
+  font-weight: 700;
+  line-height: 1.3;
+  margin: 1.3rem 0 0.6rem;
+}
+.fusion-md h1 { font-size: 1.25rem; }
+.fusion-md h2 { font-size: 1.1rem; }
+.fusion-md h3 { font-size: 1rem; }
+.fusion-md ul,
+.fusion-md ol { margin: 0 0 0.85rem; padding-left: 1.35rem; }
+.fusion-md li { margin: 0.25rem 0; }
+.fusion-md ul li { list-style: disc; }
+.fusion-md ol li { list-style: decimal; }
+.fusion-md code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.82em;
+  background: rgba(208, 188, 255, 0.1);
+  color: #e2d4ff;
+  padding: 0.12em 0.4em;
+  border-radius: 6px;
+}
+.fusion-md pre {
+  background: #0b1326;
+  border: 1px solid rgba(73, 68, 84, 0.3);
+  border-radius: 12px;
+  padding: 0.9rem 1rem;
+  overflow-x: auto;
+  margin: 0 0 0.85rem;
+}
+.fusion-md pre code {
+  background: transparent;
+  color: #dae2fd;
+  padding: 0;
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+.fusion-md blockquote {
+  border-left: 3px solid rgba(208, 188, 255, 0.4);
+  margin: 0 0 0.85rem;
+  padding: 0.2rem 0 0.2rem 1rem;
+  color: rgba(203, 195, 215, 0.75);
+}
+.fusion-md table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 0.85rem;
+  font-size: 0.82rem;
+}
+.fusion-md th,
+.fusion-md td {
+  border: 1px solid rgba(73, 68, 84, 0.3);
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+}
+.fusion-md th { color: #dae2fd; background: rgba(45, 52, 73, 0.5); }
+.fusion-md hr { border: none; border-top: 1px solid rgba(73, 68, 84, 0.3); margin: 1.1rem 0; }
