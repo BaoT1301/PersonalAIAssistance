@@ -7,8 +7,9 @@ import uvicorn
 from fastapi import Request, Response
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.orm import Session
+import json
 
 from config import get_settings
 from database import check_database, database_type, get_db, init_db
@@ -16,6 +17,7 @@ from schemas import (
     ChatRequest,
     ChatResponse,
     DocumentCreate,
+    DocumentDetail,
     DocumentOut,
     HealthResponse,
     InsightsResponse,
@@ -32,7 +34,14 @@ from schemas import (
 from services.documents import add_document, delete_document, get_document, list_documents
 from services.insights import get_insights
 from services.operations import run_migrations
-from services.research import cache, chat_message, get_research_result, list_session_results, research_query
+from services.research import (
+    cache,
+    chat_message,
+    get_research_result,
+    list_session_results,
+    research_query,
+    stream_research_events,
+)
 from services.sessions import WorkspaceAccessError, create_session, delete_session, get_session_detail, list_sessions, update_session_title
 from services.uploads import DocumentUploadError, document_from_upload
 
@@ -216,6 +225,24 @@ def chat(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found") from exc
 
 
+@app.post("/api/research/stream")
+def research_stream(
+    payload: ResearchRequest,
+    workspace_id: str = Depends(get_workspace_id),
+) -> StreamingResponse:
+    """Stream a research answer as newline-delimited JSON events (token-by-token)."""
+
+    def event_stream():
+        for event in stream_research_events(payload.query.strip(), payload.session_id, workspace_id):
+            yield json.dumps(event) + "\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.post("/api/sessions", response_model=SessionOut, status_code=status.HTTP_201_CREATED)
 def create_chat_session(
     payload: SessionCreate,
@@ -308,12 +335,12 @@ async def upload_document(
     return document
 
 
-@app.get("/api/documents/{document_id}", response_model=DocumentOut)
+@app.get("/api/documents/{document_id}", response_model=DocumentDetail)
 def get_saved_document(
     document_id: str,
     db: Session = Depends(get_db),
     workspace_id: str = Depends(get_workspace_id),
-) -> DocumentOut:
+) -> DocumentDetail:
     document = get_document(db, document_id, workspace_id)
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document not found")

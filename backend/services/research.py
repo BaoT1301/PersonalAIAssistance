@@ -1,8 +1,13 @@
+import logging
+import re
 import time
+from collections.abc import Iterator
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from config import get_settings
+from database import SessionLocal
 from models import ResearchResult, ResearchSession, Source
 from schemas import (
     AIResearchPayload,
@@ -12,7 +17,7 @@ from schemas import (
     ResearchResultSummary,
     SourceOut,
 )
-from services.ai import run_research
+from services.ai import run_research, run_research_stream
 from services.cache import ResearchCache
 from services.documents import document_cache_key, document_sources_for_session
 from services.sessions import WorkspaceAccessError, add_message, get_or_create_session, get_recent_history
@@ -20,6 +25,7 @@ from services.sources import gather_sources, needs_search
 from services.text import normalize_query, title_from_query
 
 
+logger = logging.getLogger("fusionai.research")
 cache = ResearchCache()
 
 
@@ -165,7 +171,7 @@ def research_query(
     add_message(db, session, "assistant", payload.answer)
 
     return ResearchResponse(
-        topic=query.title(),
+        topic=query.strip(),
         answer=payload.answer,
         summary=payload.summary,
         sources=_source_strings(payload.sources),
@@ -176,6 +182,7 @@ def research_query(
         session_id=session.id,
         result_id=result.id,
         citations=payload.sources,
+        follow_up_questions=payload.follow_up_questions,
     )
 
 
@@ -196,4 +203,118 @@ def chat_message(
         latency_ms=response.latency_ms,
         result_id=response.result_id,
         citations=response.citations,
+        follow_up_questions=response.follow_up_questions,
     )
+
+
+# ─── Streaming ────────────────────────────────────────────────────────────────
+
+
+def _plain_summary(answer: str, limit: int = 400) -> str:
+    text = " ".join(answer.split())
+    return text[:limit].rstrip() + ("…" if len(text) > limit else "")
+
+
+def _stream_text_events(text: str) -> Iterator[dict]:
+    for part in re.split(r"(\s+)", text):
+        if part:
+            yield {"type": "token", "text": part}
+
+
+def stream_research_events(
+    query: str,
+    session_id: str | None,
+    owner_id: str,
+) -> Iterator[dict]:
+    """Generator of NDJSON-ready events driving the streaming chat experience.
+
+    Manages its own DB session (StreamingResponse keeps generating after the
+    request's dependency-injected session would have closed).
+    """
+    db = SessionLocal()
+    try:
+        started = time.perf_counter()
+        normalized_query = normalize_query(query)
+        try:
+            session = get_or_create_session(db, session_id, owner_id, title=title_from_query(query))
+        except WorkspaceAccessError:
+            yield {"type": "error", "message": "Session not found"}
+            return
+
+        add_message(db, session, "user", query)
+        yield {"type": "session", "session_id": session.id}
+
+        document_sources = document_sources_for_session(db, session.id)
+        doc_key = document_cache_key(db, session.id)
+        cache_mode = "research" if not doc_key else f"research:session:{session.id}:docs:{doc_key}"
+
+        cached_payload = cache.get(normalized_query, mode=cache_mode)
+        if cached_payload:
+            payload = _payload_from_cache(cached_payload)
+            cached = True
+            for event in _stream_text_events(payload.answer):
+                yield event
+        else:
+            cached = False
+            if needs_search(query):
+                yield {"type": "status", "message": "Searching the web & Wikipedia…"}
+                web_sources = gather_sources(query)
+            else:
+                web_sources = []
+            sources = [*document_sources, *web_sources]
+
+            yield {"type": "status", "message": "Synthesizing with Claude…"}
+            history = get_recent_history(db, session.id)
+
+            answer_parts: list[str] = []
+            follow_ups: list[str] = []
+            for event in run_research_stream(query, history, sources):
+                if event["type"] == "token":
+                    answer_parts.append(event["text"])
+                    yield event
+                elif event["type"] == "final":
+                    follow_ups = event.get("follow_up_questions", [])
+                    if event.get("answer"):
+                        answer_parts = [event["answer"]]
+
+            answer = "".join(answer_parts).strip() or "No answer was generated."
+            has_key = bool(get_settings().anthropic_api_key)
+            tools_used: list[str] = []
+            if any(s.source_type == "wikipedia" for s in sources):
+                tools_used.append("wikipedia")
+            if any(s.source_type == "web" for s in sources):
+                tools_used.append("search")
+            if document_sources:
+                tools_used.append("documents")
+            tools_used.append("claude" if has_key else "fallback")
+
+            payload = AIResearchPayload(
+                answer=answer,
+                summary=_plain_summary(answer),
+                sources=sources,
+                tools_used=tools_used,
+                confidence="high" if sources else "medium",
+                follow_up_questions=follow_ups,
+            )
+            cache.set(normalized_query, _payload_to_cache(payload), mode=cache_mode)
+
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        result = _persist_result(db, session.id, query, payload, cached, latency_ms)
+        add_message(db, session, "assistant", payload.answer)
+
+        yield {
+            "type": "done",
+            "session_id": session.id,
+            "result_id": result.id,
+            "citations": [source.model_dump(mode="json") for source in payload.sources],
+            "tools_used": payload.tools_used,
+            "confidence": payload.confidence,
+            "follow_up_questions": payload.follow_up_questions,
+            "cached": cached,
+            "latency_ms": latency_ms,
+        }
+    except Exception as exc:  # noqa: BLE001 — surface a clean error event to the client
+        logger.exception("streaming research failed: %s", exc)
+        yield {"type": "error", "message": str(exc)}
+    finally:
+        db.close()

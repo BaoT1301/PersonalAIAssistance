@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Sequence
+import re
+from collections.abc import Iterator, Sequence
 from functools import lru_cache
 
 from config import get_settings
@@ -9,6 +10,9 @@ from schemas import AIResearchPayload, SourceOut
 from services.sources import source_context
 
 logger = logging.getLogger("fusionai.ai")
+
+# Marker the streaming prompt emits between the answer body and follow-up questions.
+_STREAM_SENTINEL = "---FOLLOWUPS---"
 
 
 def _fallback_payload(
@@ -31,9 +35,11 @@ def _fallback_payload(
     )
     return AIResearchPayload(
         answer=(
-            f"{query.title()} can be researched through a structured workflow that combines "
-            "source discovery, evidence extraction, synthesis, and citation tracking."
-            f"{note}{source_note} Configure ANTHROPIC_API_KEY to enable full Claude-powered answers."
+            "**FusionAI is running in fallback mode.**\n\n"
+            f"Your question — _{query.strip()}_ — can be researched through a structured workflow "
+            "that combines source discovery, evidence extraction, synthesis, and citation tracking."
+            f"{note}{source_note}\n\n"
+            "To enable full Claude-powered answers, configure a funded `ANTHROPIC_API_KEY`."
         ),
         summary=(
             f"1. Research Focus\n"
@@ -60,7 +66,11 @@ def _fallback_payload(
         sources=sources,
         tools_used=["fallback", "source-retrieval", "postgresql-ready"],
         confidence="medium",
-        follow_up_questions=[],
+        follow_up_questions=[
+            "Can you summarize the key points?",
+            "What are the main limitations or counterarguments?",
+            "What related topics should I explore next?",
+        ],
     )
 
 
@@ -83,8 +93,11 @@ Use the retrieved source context below to write an accurate, well-sourced answer
 Prefer useful evidence over filler. Do not invent facts not present in the context.
 
 Formatting rules:
-- Return ONLY valid JSON that matches the schema — no markdown fences, no extra text.
-- Keep the answer field in plain text (no markdown).
+- Return ONLY valid JSON that matches the schema — no markdown fences around the JSON, no extra text.
+- The "answer" field should be well-formatted Markdown: use short paragraphs, **bold** for
+  key terms, bullet or numbered lists where helpful, and `inline code` or fenced code blocks
+  for code. Use second-level headings (##) only when the answer has clearly distinct sections.
+- The "summary" field must stay plain text (a few sentences, no markdown).
 - Include source objects for every source that informs the answer.
 - Set tools_used to include "wikipedia", "search", and/or "claude" as appropriate.
 - Confidence must be exactly one of: low, medium, or high.
@@ -162,3 +175,119 @@ def run_research(
     except Exception as exc:
         logger.warning("AI inference failed, using fallback: %s", exc)
         return _fallback_payload(query, str(exc), retrieved_sources)
+
+
+# ─── Streaming ────────────────────────────────────────────────────────────────
+
+
+@lru_cache(maxsize=1)
+def _get_stream_llm_and_prompt():
+    """Streaming chain that writes a Markdown answer directly (no JSON wrapper)."""
+    from langchain_anthropic import ChatAnthropic
+    from langchain_core.prompts import ChatPromptTemplate
+
+    settings = get_settings()
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                """You are FusionAI, a concise but comprehensive research assistant.
+
+Use the retrieved source context below to write an accurate, well-sourced answer.
+Prefer useful evidence over filler. Do not invent facts not present in the context.
+
+Write the answer as clean Markdown: short paragraphs, **bold** for key terms, bullet or
+numbered lists where helpful, and `inline code` or fenced code blocks for code. Use
+second-level headings (##) only when the answer clearly has multiple sections.
+
+After the answer, output a line containing exactly {sentinel} and then up to three short,
+specific follow-up questions the user might ask next — one per line, no numbering.
+
+Retrieved source context:
+{retrieved_context}
+
+Chat history:
+{chat_history}""",
+            ),
+            ("human", "{query}"),
+        ]
+    ).partial(sentinel=_STREAM_SENTINEL)
+
+    llm = ChatAnthropic(
+        model=settings.anthropic_model,
+        max_tokens=settings.max_tokens,
+        api_key=settings.anthropic_api_key,
+    )
+    return prompt, llm
+
+
+def _stream_static(answer: str, follow_ups: list[str]) -> Iterator[dict]:
+    """Emit a fixed answer as token events (used for fallback / offline mode)."""
+    for part in re.split(r"(\s+)", answer):
+        if part:
+            yield {"type": "token", "text": part}
+    yield {"type": "final", "answer": answer, "follow_up_questions": follow_ups or []}
+
+
+def run_research_stream(
+    query: str,
+    chat_history: Sequence[dict[str, str]] | None = None,
+    retrieved_sources: list[SourceOut] | None = None,
+) -> Iterator[dict]:
+    """Yield {'type':'token','text':...} events, then one {'type':'final', ...}."""
+    settings = get_settings()
+    sources = retrieved_sources or []
+    history_text = "\n".join(
+        f"{item.get('role', 'user')}: {item.get('content', '')}"
+        for item in (chat_history or [])[-8:]
+    )
+
+    if not settings.anthropic_api_key:
+        payload = _fallback_payload(query, "ANTHROPIC_API_KEY is missing", sources or None)
+        yield from _stream_static(payload.answer, payload.follow_up_questions)
+        return
+
+    try:
+        prompt, llm = _get_stream_llm_and_prompt()
+        chain = prompt | llm
+        buffer = ""
+        emitted = 0
+        sentinel_found = False
+        for chunk in chain.stream(
+            {"query": query, "chat_history": history_text, "retrieved_context": source_context(sources)}
+        ):
+            piece = chunk.content
+            if isinstance(piece, list):
+                piece = "".join(
+                    block.get("text", "") if isinstance(block, dict) else str(block) for block in piece
+                )
+            if not piece:
+                continue
+            buffer += piece
+            if sentinel_found:
+                continue
+            idx = buffer.find(_STREAM_SENTINEL)
+            if idx == -1:
+                # Hold back the tail in case the sentinel is split across chunks.
+                safe = len(buffer) - len(_STREAM_SENTINEL)
+                if safe > emitted:
+                    yield {"type": "token", "text": buffer[emitted:safe]}
+                    emitted = safe
+            else:
+                if idx > emitted:
+                    yield {"type": "token", "text": buffer[emitted:idx]}
+                emitted = idx
+                sentinel_found = True
+
+        answer, separator, tail = buffer.partition(_STREAM_SENTINEL)
+        if not separator and len(buffer) > emitted:
+            yield {"type": "token", "text": buffer[emitted:]}
+        answer = answer.strip()
+        follow_ups: list[str] = []
+        if separator:
+            follow_ups = [line.strip("-•* \t").strip() for line in tail.splitlines() if line.strip()][:3]
+        yield {"type": "final", "answer": answer, "follow_up_questions": follow_ups}
+    except Exception as exc:
+        logger.warning("AI streaming failed, using fallback: %s", exc)
+        payload = _fallback_payload(query, str(exc), sources or None)
+        yield from _stream_static(payload.answer, payload.follow_up_questions)

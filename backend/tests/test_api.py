@@ -61,7 +61,7 @@ def test_research_endpoint_returns_frontend_compatible_shape():
         body = response.json()
         result_response = client.get(f"/api/results/{body['result_id']}")
 
-    assert body["topic"] == "Langchain Retrieval"
+    assert body["topic"] == "LangChain retrieval"
     assert isinstance(body["summary"], str)
     assert isinstance(body["sources"], list)
     assert isinstance(body["tools_used"], list)
@@ -258,6 +258,51 @@ def test_text_document_upload_creates_document():
     assert upload_response.json()["title"] == "Uploaded Notes"
     assert upload_response.json()["source_type"] == "document"
     assert detail_response.json()["content_length"] >= 20
+
+
+def test_docx_document_upload_extracts_text():
+    from io import BytesIO
+
+    from docx import Document as DocxDocument
+
+    doc = DocxDocument()
+    doc.add_paragraph("Project Zephyr launches in March. The lead engineer is Dana Cruz.")
+    buffer = BytesIO()
+    doc.save(buffer)
+
+    with TestClient(app) as client:
+        session_response = client.post("/api/sessions", json={"title": "Docx session"})
+        session_id = session_response.json()["id"]
+
+        upload_response = client.post(
+            f"/api/sessions/{session_id}/documents/upload",
+            files={
+                "file": (
+                    "memo.docx",
+                    buffer.getvalue(),
+                    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                )
+            },
+        )
+
+    assert upload_response.status_code == 201
+    body = upload_response.json()
+    assert body["source_type"] == "docx"
+    assert "Dana Cruz" in body["content_preview"]
+
+
+def test_legacy_doc_upload_is_rejected_with_guidance():
+    with TestClient(app) as client:
+        session_response = client.post("/api/sessions", json={"title": "Legacy doc"})
+        session_id = session_response.json()["id"]
+
+        upload_response = client.post(
+            f"/api/sessions/{session_id}/documents/upload",
+            files={"file": ("old.doc", b"\xd0\xcf\x11\xe0 legacy word binary", "application/msword")},
+        )
+
+    assert upload_response.status_code == 400
+    assert ".docx" in upload_response.json()["detail"]
 
 
 def test_document_upload_rejects_unsupported_file_type():
