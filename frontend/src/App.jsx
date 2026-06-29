@@ -1,6 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react'
 import { Routes, Route, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
+import ReactMarkdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import './App.css'
 
 // ─── Error Boundary ───────────────────────────────────────────────────────────
@@ -36,6 +38,78 @@ class ErrorBoundary extends React.Component {
 
 function Icon({ name, className = '', style }) {
   return <span className={`material-symbols-outlined ${className}`} style={style}>{name}</span>
+}
+
+// ─── Auto-growing textarea ──────────────────────────────────────────────────
+// Grows with its content (so pasting a long problem expands the box) up to
+// maxHeight, then scrolls internally. Enter submits, Shift+Enter inserts a newline.
+
+function AutoGrowTextarea({
+  value,
+  onChange,
+  onSubmit,
+  maxHeight = 220,
+  minRows = 1,
+  className = '',
+  style,
+  placeholder,
+  disabled,
+  autoFocus,
+  inputRef,
+  ariaLabel,
+  submitDisabled,
+}) {
+  const ref = useRef(null)
+
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    el.style.height = 'auto'
+    const next = Math.min(el.scrollHeight, maxHeight)
+    el.style.height = `${next}px`
+    el.style.overflowY = el.scrollHeight > maxHeight ? 'auto' : 'hidden'
+  }, [value, maxHeight])
+
+  function handleKeyDown(e) {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      if (!submitDisabled) onSubmit?.(e)
+    }
+  }
+
+  return (
+    <textarea
+      ref={el => { ref.current = el; if (inputRef) inputRef.current = el }}
+      value={value}
+      onChange={onChange}
+      onKeyDown={handleKeyDown}
+      rows={minRows}
+      placeholder={placeholder}
+      disabled={disabled}
+      autoFocus={autoFocus}
+      aria-label={ariaLabel}
+      className={`resize-none ${className}`}
+      style={style}
+    />
+  )
+}
+
+// ─── Markdown renderer ──────────────────────────────────────────────────────
+// Renders assistant answers as rich Markdown. Links open safely in a new tab;
+// styling lives in the .fusion-md block in index.css.
+
+function Markdown({ children }) {
+  return (
+    <div className="fusion-md">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ node, ...props }) => <a target="_blank" rel="noopener noreferrer" {...props} />,
+        }}>
+        {children || ''}
+      </ReactMarkdown>
+    </div>
+  )
 }
 
 // ─── Animated Hero Mockup ─────────────────────────────────────────────────────
@@ -446,6 +520,71 @@ async function apiCall(path, options = {}) {
   return res.json()
 }
 
+// Multipart upload — must NOT set Content-Type so the browser adds the boundary.
+async function uploadFile(path, file, fields = {}) {
+  const form = new FormData()
+  form.append('file', file)
+  for (const [key, value] of Object.entries(fields)) {
+    if (value != null) form.append(key, value)
+  }
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST',
+    headers: { 'x-fusion-workspace-id': WORKSPACE_ID },
+    body: form,
+  })
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}))
+    const raw = err.detail || err.error || `Upload failed (${res.status})`
+    throw new Error(typeof raw === 'string' ? raw : JSON.stringify(raw))
+  }
+  return res.json()
+}
+
+// Consume the NDJSON streaming endpoint, invoking onEvent for each parsed event.
+async function streamResearch(body, { signal, onEvent }) {
+  const res = await fetch(`${API_BASE}/api/research/stream`, {
+    method: 'POST',
+    headers: { 'x-fusion-workspace-id': WORKSPACE_ID, 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+    signal,
+  })
+  if (!res.ok || !res.body) {
+    const err = await res.json().catch(() => ({}))
+    const raw = err.detail || err.error || `Request failed (${res.status})`
+    throw new Error(typeof raw === 'string' ? raw : JSON.stringify(raw))
+  }
+  const reader = res.body.getReader()
+  const decoder = new TextDecoder()
+  let buffer = ''
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    buffer += decoder.decode(value, { stream: true })
+    let nl
+    while ((nl = buffer.indexOf('\n')) >= 0) {
+      const line = buffer.slice(0, nl).trim()
+      buffer = buffer.slice(nl + 1)
+      if (line) onEvent(JSON.parse(line))
+    }
+  }
+  const tail = buffer.trim()
+  if (tail) onEvent(JSON.parse(tail))
+}
+
+const ACCEPTED_UPLOAD_TYPES = '.pdf,.docx,.txt,.md'
+const MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+
+function formatBytes(bytes) {
+  if (!bytes) return ''
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
+}
+
+function docIcon(sourceType) {
+  return { pdf: 'picture_as_pdf', docx: 'description', document: 'article' }[sourceType] || 'draft'
+}
+
 function formatRelativeTime(dateStr) {
   const diff = Date.now() - new Date(dateStr).getTime()
   const mins = Math.floor(diff / 60000)
@@ -553,9 +692,121 @@ function ResearchSidebar({ activeNav, onNavChange, sessions, onSessionClick }) {
   )
 }
 
+// ─── Document upload UI ───────────────────────────────────────────────────────
+
+function AttachButton({ onSelect, disabled }) {
+  const inputRef = useRef(null)
+  return (
+    <>
+      <input
+        ref={inputRef}
+        type="file"
+        accept={ACCEPTED_UPLOAD_TYPES}
+        className="hidden"
+        onChange={e => {
+          const file = e.target.files?.[0]
+          if (file) onSelect(file)
+          e.target.value = '' // allow re-selecting the same file
+        }}
+      />
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => inputRef.current?.click()}
+        title="Attach a document (PDF, Word, TXT, MD)"
+        className="p-3 rounded-2xl hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
+        style={{ color: 'rgba(208,188,255,0.65)' }}>
+        <Icon name="attach_file" />
+      </button>
+    </>
+  )
+}
+
+function DocumentChips({ documents, pending, error, onRemove, removingIds, onView }) {
+  if (!documents.length && !pending && !error) return null
+  return (
+    <div className="flex flex-wrap gap-2 mb-3">
+      {documents.map(doc => (
+        <div key={doc.id}
+          className="flex items-center gap-2 pl-2.5 pr-1.5 py-1.5 rounded-xl border text-xs"
+          style={{ backgroundColor: 'rgba(19,27,46,0.75)', borderColor: 'rgba(208,188,255,0.2)', color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>
+          <Icon name={docIcon(doc.source_type)} style={{ fontSize: '16px', color: '#d0bcff' }} />
+          <button type="button" onClick={() => onView?.(doc.id)}
+            className="max-w-[180px] truncate font-semibold hover:underline" title={`View “${doc.title}”`}>
+            {doc.title}
+          </button>
+          <span style={{ color: 'rgba(203,195,215,0.4)' }}>{(doc.content_length / 1000).toFixed(1)}k chars</span>
+          <button type="button" onClick={() => onRemove(doc.id)} disabled={removingIds.has(doc.id)}
+            className="w-5 h-5 rounded-full flex items-center justify-center hover:bg-white/10 disabled:opacity-50 transition-colors"
+            aria-label={`Remove ${doc.title}`} title="Remove document">
+            <Icon name={removingIds.has(doc.id) ? 'hourglass_empty' : 'close'} style={{ fontSize: '13px', color: 'rgba(203,195,215,0.6)' }} />
+          </button>
+        </div>
+      ))}
+      {pending && (
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs"
+          style={{ backgroundColor: 'rgba(19,27,46,0.75)', borderColor: 'rgba(208,188,255,0.2)', color: 'rgba(218,226,253,0.7)', fontFamily: 'Manrope, sans-serif' }}>
+          <div className="w-3 h-3 border-2 rounded-full animate-spin" style={{ borderColor: '#d0bcff', borderTopColor: 'transparent' }} />
+          <span className="max-w-[180px] truncate">Reading {pending}…</span>
+        </div>
+      )}
+      {error && (
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs"
+          style={{ backgroundColor: 'rgba(255,180,171,0.08)', borderColor: 'rgba(255,180,171,0.35)', color: '#ffb4ab', fontFamily: 'Inter, sans-serif' }}>
+          <Icon name="error_outline" style={{ fontSize: '14px' }} />
+          <span className="max-w-[260px] truncate" title={error}>{error}</span>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function DocViewerModal({ doc, onClose }) {
+  useEffect(() => {
+    function onKey(e) { if (e.key === 'Escape') onClose() }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [onClose])
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      className="fixed inset-0 z-[60] flex items-center justify-center p-4"
+      style={{ backgroundColor: 'rgba(3,6,23,0.7)', backdropFilter: 'blur(4px)' }}
+      onClick={onClose}>
+      <motion.div
+        initial={{ opacity: 0, scale: 0.96, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96 }}
+        onClick={e => e.stopPropagation()}
+        className="w-full max-w-2xl max-h-[80vh] rounded-2xl border flex flex-col overflow-hidden"
+        style={{ backgroundColor: '#131b2e', borderColor: 'rgba(73,68,84,0.3)' }}>
+        <div className="flex items-center justify-between gap-3 px-5 py-4 border-b shrink-0" style={{ borderColor: 'rgba(73,68,84,0.2)' }}>
+          <div className="flex items-center gap-3 min-w-0">
+            <Icon name={docIcon(doc.source_type)} style={{ color: '#d0bcff' }} />
+            <div className="min-w-0">
+              <p className="font-bold truncate" style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>{doc.title}</p>
+              <p className="text-[11px]" style={{ color: 'rgba(203,195,215,0.5)', fontFamily: 'Inter, sans-serif' }}>
+                {doc.source_type.toUpperCase()} · {doc.content_length.toLocaleString()} characters extracted
+              </p>
+            </div>
+          </div>
+          <button onClick={onClose} aria-label="Close document viewer"
+            className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/10 shrink-0" style={{ color: 'rgba(203,195,215,0.6)' }}>
+            <Icon name="close" />
+          </button>
+        </div>
+        <div className="overflow-y-auto px-5 py-4">
+          <pre className="whitespace-pre-wrap text-sm leading-relaxed" style={{ color: '#cbc3d7', fontFamily: 'Inter, sans-serif' }}>
+            {doc.content_text}
+          </pre>
+        </div>
+      </motion.div>
+    </motion.div>
+  )
+}
+
 // ─── New Research View ────────────────────────────────────────────────────────
 
-function NewResearchView({ onSubmit, isLoading }) {
+function NewResearchView({ onSubmit, isLoading, documents, onUpload, onRemoveDoc, onViewDoc, docPending, docError, removingDocIds }) {
   const [query, setQuery] = useState('')
 
   function handleSubmit(e) {
@@ -622,21 +873,30 @@ function NewResearchView({ onSubmit, isLoading }) {
           onSubmit={handleSubmit} className="w-full relative group mb-12">
           <div className="absolute -inset-0.5 rounded-2xl blur opacity-20 group-focus-within:opacity-60 transition duration-500 pointer-events-none"
             style={{ background: 'linear-gradient(to right, rgba(208,188,255,0.5), rgba(160,120,255,0.5))' }} />
-          <div className="relative backdrop-blur-2xl border rounded-2xl flex items-center p-2 min-h-[72px]"
+          <div className="relative backdrop-blur-2xl border rounded-2xl flex items-end gap-1 p-2 min-h-[72px]"
             style={{ backgroundColor: 'rgba(45,52,73,0.6)', borderColor: 'rgba(73,68,84,0.2)' }}>
-            <div className="px-4 flex items-center" style={{ color: '#d0bcff' }}>
+            <div className="px-3 flex items-center self-stretch pt-3.5" style={{ color: '#d0bcff' }}>
               <Icon name="terminal" style={{ fontSize: '28px' }} />
             </div>
-            <input value={query} onChange={e => setQuery(e.target.value)}
-              onKeyDown={e => e.key === 'Enter' && !e.shiftKey && handleSubmit(e)}
-              className="bg-transparent border-none focus:ring-0 outline-none w-full text-lg py-4"
+            <AutoGrowTextarea
+              value={query}
+              onChange={e => setQuery(e.target.value)}
+              onSubmit={handleSubmit}
+              maxHeight={260}
+              className="bg-transparent border-none focus:ring-0 outline-none w-full text-lg py-4 leading-relaxed"
               placeholder="What are we researching today?"
               style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}
-              disabled={isLoading} autoFocus />
-            <div className="pr-2">
+              disabled={isLoading}
+              submitDisabled={isLoading}
+              ariaLabel="Research question"
+              autoFocus
+            />
+            <div className="flex items-center gap-1 pb-0.5">
+              <AttachButton onSelect={onUpload} disabled={isLoading || !!docPending} />
               <motion.button
                 type="submit"
                 disabled={isLoading || !query.trim()}
+                aria-label="Start research"
                 whileHover={{ scale: 1.08 }}
                 whileTap={{ scale: 0.92 }}
                 transition={{ type: 'spring', stiffness: 400, damping: 20 }}
@@ -648,6 +908,14 @@ function NewResearchView({ onSubmit, isLoading }) {
               </motion.button>
             </div>
           </div>
+          <div className="mt-3 flex justify-center">
+            <DocumentChips documents={documents} pending={docPending} error={docError} onRemove={onRemoveDoc} removingIds={removingDocIds} onView={onViewDoc} />
+          </div>
+          <p className="text-center text-[11px]" style={{ color: 'rgba(203,195,215,0.35)', fontFamily: 'Inter, sans-serif' }}>
+            Press <span style={{ color: 'rgba(208,188,255,0.6)', fontWeight: 600 }}>Enter</span> to send ·
+            {' '}<span style={{ color: 'rgba(208,188,255,0.6)', fontWeight: 600 }}>Shift + Enter</span> for a new line ·
+            {' '}attach <span style={{ color: 'rgba(208,188,255,0.6)', fontWeight: 600 }}>PDF / Word / TXT</span> for context
+          </p>
         </motion.form>
 
         {/* Topic cards — staggered entrance + hover float */}
@@ -702,9 +970,21 @@ function UserMessage({ message }) {
   )
 }
 
-function AssistantMessage({ message }) {
-  const hasSources = message.sources && message.sources.length > 0
-  const toolNames = [...new Set((message.tools_used || []).map(toolDisplayName))]
+function AssistantMessage({ message, onSuggestion, onRegenerate, isLast, streamingStatus }) {
+  const streaming = !!message.streaming
+  const hasSources = !streaming && message.sources && message.sources.length > 0
+  const toolNames = streaming ? [] : [...new Set((message.tools_used || []).map(toolDisplayName))]
+  const followUps = streaming ? [] : (message.followUps || [])
+  const time = new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+  const [copied, setCopied] = useState(false)
+
+  async function handleCopy() {
+    try {
+      await navigator.clipboard.writeText(message.content)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1600)
+    } catch { /* clipboard unavailable */ }
+  }
 
   return (
     <motion.div
@@ -717,18 +997,21 @@ function AssistantMessage({ message }) {
       </div>
       <div className="flex-1 flex flex-col lg:flex-row gap-6 min-w-0">
         <div className="flex-1 min-w-0 space-y-4">
-          {message.topic && (
-            <h3 className="text-xl font-bold tracking-tight" style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>
-              {message.topic}
-            </h3>
-          )}
-          {message.isError ? (
+          {streaming && !message.content ? (
+            <div className="flex items-center gap-2 py-1">
+              <div className="w-4 h-4 border-2 rounded-full animate-spin" style={{ borderColor: '#d0bcff', borderTopColor: 'transparent' }} />
+              <span className="text-xs font-semibold" style={{ color: '#d0bcff', fontFamily: 'Manrope, sans-serif' }}>
+                {streamingStatus || 'Thinking…'}
+              </span>
+            </div>
+          ) : message.isError ? (
             <p className="text-sm leading-relaxed" style={{ color: '#ffb4ab', fontFamily: 'Inter, sans-serif' }}>{message.content}</p>
           ) : (
-            <div className="space-y-3">
-              {message.content.split('\n').filter(p => p.trim()).map((para, i) => (
-                <p key={i} className="text-sm leading-relaxed" style={{ color: '#cbc3d7', fontFamily: 'Inter, sans-serif' }}>{para}</p>
-              ))}
+            <div className="relative">
+              <Markdown>{message.content}</Markdown>
+              {streaming && (
+                <span className="inline-block w-1.5 h-4 ml-0.5 align-middle animate-pulse rounded-sm" style={{ backgroundColor: '#d0bcff' }} />
+              )}
             </div>
           )}
           {toolNames.length > 0 && (
@@ -745,6 +1028,43 @@ function AssistantMessage({ message }) {
                   {message.confidence} confidence
                 </span>
               )}
+            </div>
+          )}
+          {!streaming && !message.isError && (
+            <div className="flex items-center gap-1">
+              <button onClick={handleCopy} aria-label="Copy answer"
+                className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-lg transition-all hover:bg-white/5"
+                style={{ color: copied ? '#86efac' : 'rgba(203,195,215,0.5)', fontFamily: 'Manrope, sans-serif' }}
+                title="Copy answer">
+                <Icon name={copied ? 'check' : 'content_copy'} style={{ fontSize: '14px' }} />
+                {copied ? 'Copied' : 'Copy'}
+              </button>
+              {isLast && onRegenerate && (
+                <button onClick={onRegenerate} aria-label="Regenerate answer"
+                  className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-lg transition-all hover:bg-white/5"
+                  style={{ color: 'rgba(203,195,215,0.5)', fontFamily: 'Manrope, sans-serif' }}
+                  title="Regenerate answer">
+                  <Icon name="refresh" style={{ fontSize: '14px' }} />
+                  Regenerate
+                </button>
+              )}
+              <span className="text-[10px] ml-1" style={{ color: 'rgba(203,195,215,0.3)', fontFamily: 'Manrope, sans-serif' }}>{time}</span>
+            </div>
+          )}
+          {followUps.length > 0 && (
+            <div className="pt-1 space-y-2">
+              <span className="text-[10px] uppercase tracking-widest font-bold block"
+                style={{ color: 'rgba(203,195,215,0.4)', fontFamily: 'Manrope, sans-serif' }}>Suggested follow-ups</span>
+              <div className="flex flex-col gap-2">
+                {followUps.slice(0, 4).map((q, i) => (
+                  <button key={i} onClick={() => onSuggestion?.(q)}
+                    className="text-left text-xs px-3 py-2 rounded-xl border transition-all hover:bg-white/5 flex items-center gap-2"
+                    style={{ backgroundColor: 'rgba(19,27,46,0.5)', borderColor: 'rgba(208,188,255,0.15)', color: '#cbc3d7', fontFamily: 'Inter, sans-serif' }}>
+                    <Icon name="arrow_forward" style={{ fontSize: '14px', color: '#d0bcff', flexShrink: 0 }} />
+                    <span>{q}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -1159,25 +1479,40 @@ function ResearchApp() {
   const [sessionId, setSessionId] = useState(null)
   const [messages, setMessages] = useState([])
   const [isLoading, setIsLoading] = useState(false)
-  const [loadingStep, setLoadingStep] = useState(0)
+  const [statusMsg, setStatusMsg] = useState('')
   const [followUp, setFollowUp] = useState('')
   const [processingIds, setProcessingIds] = useState(new Set())
+  const [documents, setDocuments] = useState([])
+  const [docPending, setDocPending] = useState(null)
+  const [docError, setDocError] = useState(null)
+  const [removingDocIds, setRemovingDocIds] = useState(new Set())
+  const [atBottom, setAtBottom] = useState(true)
+  const [viewingDoc, setViewingDoc] = useState(null)
   const messagesEndRef = useRef(null)
+  const chatScrollRef = useRef(null)
+  const followUpRef = useRef(null)
+  const abortRef = useRef(null)
 
   useEffect(() => {
     apiCall('/api/sessions').then(setSessions).catch(() => {})
   }, [])
 
+  // Keep pinned to the newest message only while the user is already at the bottom,
+  // so streaming tokens don't yank the view if they've scrolled up to read.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isLoading])
+    if (atBottom) messagesEndRef.current?.scrollIntoView({ behavior: 'auto' })
+  }, [messages, isLoading, atBottom])
 
-  useEffect(() => {
-    if (!isLoading) return
-    setLoadingStep(0)
-    const t = setInterval(() => setLoadingStep(s => (s + 1) % LOADING_STEPS.length), 1800)
-    return () => clearInterval(t)
-  }, [isLoading])
+  function handleChatScroll() {
+    const el = chatScrollRef.current
+    if (!el) return
+    setAtBottom(el.scrollHeight - el.scrollTop - el.clientHeight < 120)
+  }
+
+  function scrollToBottom() {
+    setAtBottom(true)
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }
 
   function refreshSessions() {
     apiCall('/api/sessions').then(setSessions).catch(() => {})
@@ -1186,66 +1521,135 @@ function ResearchApp() {
   function handleNavChange(navId) {
     setActiveNav(navId)
     if (navId === 'new') {
-      setView('new'); setSessionId(null); setMessages([])
+      setView('new'); setSessionId(null); setMessages([]); setDocuments([]); setDocError(null)
     } else {
       setView(navId)
     }
   }
 
-  async function handleResearch(query) {
-    setIsLoading(true)
-    setMessages([{ id: `u-${Date.now()}`, role: 'user', content: query, timestamp: new Date() }])
-    setView('chat')
+  // Documents require a session; create one lazily on first attach.
+  async function ensureSession() {
+    if (sessionId) return sessionId
+    const session = await apiCall('/api/sessions', { method: 'POST', body: JSON.stringify({}) })
+    setSessionId(session.id)
+    refreshSessions()
+    return session.id
+  }
+
+  async function handleUploadDocument(file) {
+    setDocError(null)
+    if (file.size > MAX_UPLOAD_BYTES) {
+      setDocError(`"${file.name}" is too large (max ${formatBytes(MAX_UPLOAD_BYTES)})`)
+      return
+    }
+    setDocPending(file.name)
     try {
-      const data = await apiCall('/api/research', {
-        method: 'POST',
-        body: JSON.stringify({ query, session_id: sessionId }),
-      })
-      setSessionId(data.session_id)
-      setMessages(prev => [...prev, {
-        id: data.result_id || `a-${Date.now()}`,
-        role: 'assistant',
-        content: data.answer || data.summary,
-        topic: data.topic,
-        sources: data.citations || [],
-        tools_used: data.tools_used || [],
-        confidence: data.confidence,
-        timestamp: new Date(),
-      }])
+      const id = await ensureSession()
+      const doc = await uploadFile(`/api/sessions/${id}/documents/upload`, file)
+      setDocuments(prev => [...prev, doc])
       refreshSessions()
     } catch (err) {
-      setMessages(prev => [...prev, { id: `e-${Date.now()}`, role: 'assistant', content: `Something went wrong: ${err.message}`, isError: true, timestamp: new Date() }])
+      setDocError(err.message)
     } finally {
-      setIsLoading(false)
+      setDocPending(null)
     }
   }
 
-  async function handleFollowUp(e) {
+  async function handleRemoveDocument(docId) {
+    setRemovingDocIds(prev => new Set(prev).add(docId))
+    try {
+      await apiCall(`/api/documents/${docId}`, { method: 'DELETE' })
+      setDocuments(prev => prev.filter(d => d.id !== docId))
+    } catch (err) {
+      setDocError(err.message)
+    } finally {
+      setRemovingDocIds(prev => { const s = new Set(prev); s.delete(docId); return s })
+    }
+  }
+
+  // Unified streaming runner — powers the initial search, follow-ups,
+  // suggested questions, and regenerate.
+  async function runQuery(query, { skipUserMessage = false } = {}) {
+    if (!query || isLoading) return
+    const controller = new AbortController()
+    abortRef.current = controller
+    setIsLoading(true)
+    setStatusMsg('')
+    setAtBottom(true)
+    setView('chat')
+
+    const assistantId = `a-${Date.now()}`
+    const userMessage = { id: `u-${Date.now()}`, role: 'user', content: query, timestamp: new Date() }
+    const placeholder = { id: assistantId, role: 'assistant', content: '', streaming: true, query, sources: [], tools_used: [], followUps: [], timestamp: new Date() }
+    setMessages(prev => [...prev, ...(skipUserMessage ? [] : [userMessage]), placeholder])
+
+    const patch = updater => setMessages(prev => prev.map(m => (m.id === assistantId ? { ...m, ...updater(m) } : m)))
+
+    try {
+      await streamResearch({ query, session_id: sessionId }, {
+        signal: controller.signal,
+        onEvent: ev => {
+          if (ev.type === 'session') setSessionId(ev.session_id)
+          else if (ev.type === 'status') setStatusMsg(ev.message)
+          else if (ev.type === 'token') patch(m => ({ content: m.content + ev.text }))
+          else if (ev.type === 'done') {
+            setSessionId(ev.session_id)
+            patch(() => ({
+              streaming: false,
+              sources: ev.citations || [],
+              tools_used: ev.tools_used || [],
+              confidence: ev.confidence,
+              followUps: ev.follow_up_questions || [],
+            }))
+            refreshSessions()
+            setTimeout(() => followUpRef.current?.focus(), 60)
+          } else if (ev.type === 'error') {
+            throw new Error(ev.message)
+          }
+        },
+      })
+    } catch (err) {
+      if (err.name === 'AbortError') {
+        patch(m => ({ streaming: false, stopped: true, content: m.content || '_Generation stopped._' }))
+      } else {
+        patch(() => ({ streaming: false, isError: true, content: `Something went wrong: ${err.message}` }))
+      }
+    } finally {
+      setIsLoading(false)
+      setStatusMsg('')
+      abortRef.current = null
+    }
+  }
+
+  function handleResearch(query) { runQuery(query) }
+  function sendMessage(msg) { runQuery(msg) }
+
+  function handleFollowUp(e) {
     e.preventDefault()
     const msg = followUp.trim()
     if (!msg || isLoading) return
     setFollowUp('')
-    setIsLoading(true)
-    setMessages(prev => [...prev, { id: `u-${Date.now()}`, role: 'user', content: msg, timestamp: new Date() }])
+    runQuery(msg)
+  }
+
+  function handleStop() {
+    abortRef.current?.abort()
+  }
+
+  function handleRegenerate(assistantId) {
+    if (isLoading) return
+    const msg = messages.find(m => m.id === assistantId)
+    if (!msg?.query) return
+    setMessages(prev => prev.filter(m => m.id !== assistantId))
+    runQuery(msg.query, { skipUserMessage: true })
+  }
+
+  async function handleViewDocument(docId) {
     try {
-      const data = await apiCall('/api/chat', {
-        method: 'POST',
-        body: JSON.stringify({ message: msg, session_id: sessionId }),
-      })
-      if (!sessionId && data.session_id) setSessionId(data.session_id)
-      setMessages(prev => [...prev, {
-        id: data.result_id || `a-${Date.now()}`,
-        role: 'assistant',
-        content: data.answer,
-        sources: data.citations || [],
-        tools_used: data.tools_used || [],
-        confidence: data.confidence,
-        timestamp: new Date(),
-      }])
+      const detail = await apiCall(`/api/documents/${docId}`)
+      setViewingDoc(detail)
     } catch (err) {
-      setMessages(prev => [...prev, { id: `e-${Date.now()}`, role: 'assistant', content: `Something went wrong: ${err.message}`, isError: true, timestamp: new Date() }])
-    } finally {
-      setIsLoading(false)
+      setDocError(err.message)
     }
   }
 
@@ -1257,6 +1661,8 @@ function ResearchApp() {
         .filter(m => m.role === 'user' || m.role === 'assistant')
         .map(m => ({ id: m.id, role: m.role, content: m.content, timestamp: new Date(m.created_at) }))
       setMessages(msgs)
+      setDocuments(detail.documents || [])
+      setDocError(null)
       setView('chat')
       setActiveNav('library')
     } catch (err) { console.error(err) }
@@ -1268,7 +1674,7 @@ function ResearchApp() {
     try {
       await apiCall(`/api/sessions/${id}`, { method: 'DELETE' })
       setSessions(prev => prev.filter(s => s.id !== id))
-      if (sessionId === id) { setSessionId(null); setMessages([]) }
+      if (sessionId === id) { setSessionId(null); setMessages([]); setDocuments([]) }
     } finally {
       setProcessingIds(prev => { const s = new Set(prev); s.delete(id); return s })
     }
@@ -1325,7 +1731,19 @@ function ResearchApp() {
         </header>
 
         {/* Views */}
-        {view === 'new' && <NewResearchView onSubmit={handleResearch} isLoading={isLoading} />}
+        {view === 'new' && (
+          <NewResearchView
+            onSubmit={handleResearch}
+            isLoading={isLoading}
+            documents={documents}
+            onUpload={handleUploadDocument}
+            onRemoveDoc={handleRemoveDocument}
+            onViewDoc={handleViewDocument}
+            docPending={docPending}
+            docError={docError}
+            removingDocIds={removingDocIds}
+          />
+        )}
 
         {view === 'library' && (
           <LibraryView
@@ -1343,7 +1761,7 @@ function ResearchApp() {
 
         {view === 'chat' && (
           <>
-            <section className="flex-1 overflow-y-auto px-6 py-8 md:px-12 space-y-10 relative">
+            <section ref={chatScrollRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto px-6 py-8 md:px-12 space-y-10 relative">
               {/* Subtle ambient background */}
               <div className="absolute inset-0 pointer-events-none overflow-hidden">
                 <motion.div className="absolute top-1/4 right-1/4 w-[500px] h-[500px] rounded-full blur-[140px]"
@@ -1357,19 +1775,39 @@ function ResearchApp() {
               </div>
               <div className="w-full space-y-10 relative z-10">
                 <AnimatePresence>
-                  {messages.map(msg =>
+                  {messages.map((msg, i) =>
                     msg.role === 'user'
                       ? <UserMessage key={msg.id} message={msg} />
-                      : <AssistantMessage key={msg.id} message={msg} />
+                      : <AssistantMessage
+                          key={msg.id}
+                          message={msg}
+                          streamingStatus={statusMsg}
+                          isLast={i === messages.length - 1}
+                          onSuggestion={text => !isLoading && sendMessage(text)}
+                          onRegenerate={() => handleRegenerate(msg.id)}
+                        />
                   )}
                 </AnimatePresence>
-                {isLoading && <ThinkingIndicator step={loadingStep} />}
                 <div ref={messagesEndRef} className="h-44" />
               </div>
             </section>
 
-            {/* Floating follow-up input */}
-            <div className="absolute bottom-0 left-0 right-0 p-4 md:p-6 pointer-events-none"
+            {/* Scroll-to-bottom button (appears when scrolled up) */}
+            <AnimatePresence>
+              {!atBottom && (
+                <motion.button
+                  initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}
+                  onClick={scrollToBottom}
+                  aria-label="Scroll to latest"
+                  className="absolute left-1/2 -translate-x-1/2 bottom-40 z-20 w-10 h-10 rounded-full flex items-center justify-center border shadow-xl"
+                  style={{ backgroundColor: 'rgba(45,52,73,0.95)', borderColor: 'rgba(208,188,255,0.25)', color: '#d0bcff' }}>
+                  <Icon name="arrow_downward" />
+                </motion.button>
+              )}
+            </AnimatePresence>
+
+            {/* Floating follow-up input — extra bottom padding on mobile clears the bottom nav */}
+            <div className="absolute bottom-0 left-0 right-0 p-4 pb-24 md:p-6 pointer-events-none"
               style={{ background: 'linear-gradient(to top, rgba(11,19,38,1) 55%, transparent)' }}>
               <div className="w-full pointer-events-auto px-6 md:px-12">
                 <div className="relative rounded-3xl p-2 border"
@@ -1378,31 +1816,41 @@ function ResearchApp() {
                     <div className="absolute -top-10 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full flex items-center gap-2 border shadow-xl whitespace-nowrap"
                       style={{ backgroundColor: 'rgba(45,52,73,0.95)', borderColor: 'rgba(73,68,84,0.2)' }}>
                       <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: '#d0bcff' }} />
-                      <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>Synthesizing insights</span>
+                      <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>
+                        {statusMsg || 'Generating…'}
+                      </span>
                     </div>
                   )}
+                  <div className="px-2 pt-2">
+                    <DocumentChips documents={documents} pending={docPending} error={docError} onRemove={handleRemoveDocument} removingIds={removingDocIds} onView={handleViewDocument} />
+                  </div>
                   <form onSubmit={handleFollowUp} className="flex items-end gap-2 p-1">
-                    <button type="button" className="p-3 rounded-2xl hover:bg-white/5 transition-colors" style={{ color: 'rgba(203,195,215,0.3)' }}>
-                      <Icon name="add" />
-                    </button>
-                    <textarea value={followUp} onChange={e => setFollowUp(e.target.value)}
-                      onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleFollowUp(e) } }}
-                      className="flex-1 bg-transparent border-none focus:ring-0 outline-none py-3 text-sm resize-none"
-                      placeholder="Ask a follow up question…"
+                    <AttachButton onSelect={handleUploadDocument} disabled={isLoading || !!docPending} />
+                    <AutoGrowTextarea
+                      value={followUp}
+                      onChange={e => setFollowUp(e.target.value)}
+                      onSubmit={handleFollowUp}
+                      maxHeight={200}
+                      className="flex-1 bg-transparent border-none focus:ring-0 outline-none px-3 py-3 text-sm leading-relaxed"
+                      placeholder={isLoading ? 'Type your next question…' : 'Ask a follow up question…'}
                       style={{ color: '#dae2fd', fontFamily: 'Inter, sans-serif' }}
-                      rows={1} disabled={isLoading} />
-                    <div className="flex items-center gap-1">
-                      <button type="button" className="p-3 rounded-2xl hover:bg-white/5 transition-colors" style={{ color: 'rgba(203,195,215,0.3)' }}>
-                        <Icon name="mic" />
+                      inputRef={followUpRef}
+                      ariaLabel="Ask a follow up question"
+                      submitDisabled={isLoading}
+                    />
+                    {isLoading ? (
+                      <button type="button" onClick={handleStop} aria-label="Stop generating"
+                        className="h-12 w-12 rounded-2xl flex items-center justify-center shadow-lg transition-all hover:scale-105 active:scale-95 shrink-0 border"
+                        style={{ backgroundColor: 'rgba(45,52,73,0.9)', borderColor: 'rgba(208,188,255,0.3)', color: '#d0bcff' }}>
+                        <Icon name="stop" style={{ fontVariationSettings: "'FILL' 1" }} />
                       </button>
-                      <button type="submit" disabled={isLoading || !followUp.trim()}
-                        className="h-12 w-12 rounded-2xl flex items-center justify-center shadow-lg transition-all hover:scale-105 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed"
+                    ) : (
+                      <button type="submit" disabled={!followUp.trim()} aria-label="Send message"
+                        className="h-12 w-12 rounded-2xl flex items-center justify-center shadow-lg transition-all hover:scale-105 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
                         style={{ background: 'linear-gradient(135deg, #d0bcff, #a078ff)', color: '#340080' }}>
-                        {isLoading
-                          ? <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />
-                          : <Icon name="send" style={{ fontVariationSettings: "'FILL' 1" }} />}
+                        <Icon name="send" style={{ fontVariationSettings: "'FILL' 1" }} />
                       </button>
-                    </div>
+                    )}
                   </form>
                 </div>
                 <p className="text-center text-[10px] mt-3" style={{ color: 'rgba(203,195,215,0.3)', fontFamily: 'Inter, sans-serif' }}>
@@ -1431,6 +1879,11 @@ function ResearchApp() {
           </button>
         ))}
       </nav>
+
+      {/* Document viewer modal */}
+      <AnimatePresence>
+        {viewingDoc && <DocViewerModal doc={viewingDoc} onClose={() => setViewingDoc(null)} />}
+      </AnimatePresence>
     </div>
   )
 }
