@@ -28,7 +28,7 @@ def main() -> int:
         ("database_type", database_type()),
         ("database_connected", "yes" if db_ok else "no"),
         ("auto_create_tables", "yes" if settings.auto_create_tables else "no"),
-        ("anthropic_api_key", _mask(settings.anthropic_api_key)),
+        ("openai_api_key", _mask(settings.openai_api_key)),
         ("cache", cache.status),
         ("source_lookup_enabled", "yes" if settings.source_lookup_enabled else "no"),
         ("frontend_origins", ",".join(settings.frontend_origins) or "not configured"),

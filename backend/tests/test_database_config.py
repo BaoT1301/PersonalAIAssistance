@@ -55,4 +55,4 @@ def test_production_diagnostics_reject_sqlite_database(tmp_path):
     errors, warnings = settings.diagnostics()
 
     assert "Production DATABASE_URL should point to PostgreSQL, not SQLite." in errors
-    assert "ANTHROPIC_API_KEY is required in production." in errors
+    assert "OPENAI_API_KEY is required in production." in errors

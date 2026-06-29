@@ -263,7 +263,7 @@ def stream_research_events(
                 web_sources = []
             sources = [*document_sources, *web_sources]
 
-            yield {"type": "status", "message": "Synthesizing with Claude…"}
+            yield {"type": "status", "message": "Synthesizing with GPT-4o mini…"}
             history = get_recent_history(db, session.id)
 
             answer_parts: list[str] = []
@@ -278,7 +278,7 @@ def stream_research_events(
                         answer_parts = [event["answer"]]
 
             answer = "".join(answer_parts).strip() or "No answer was generated."
-            has_key = bool(get_settings().anthropic_api_key)
+            has_key = bool(get_settings().openai_api_key)
             tools_used: list[str] = []
             if any(s.source_type == "wikipedia" for s in sources):
                 tools_used.append("wikipedia")
@@ -286,7 +286,7 @@ def stream_research_events(
                 tools_used.append("search")
             if document_sources:
                 tools_used.append("documents")
-            tools_used.append("claude" if has_key else "fallback")
+            tools_used.append("openai" if has_key else "fallback")
 
             payload = AIResearchPayload(
                 answer=answer,

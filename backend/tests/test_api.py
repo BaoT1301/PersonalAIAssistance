@@ -12,7 +12,7 @@ TEST_DB = BACKEND_DIR / "test_fusionai.db"
 if TEST_DB.exists():
     TEST_DB.unlink()
 
-os.environ["ANTHROPIC_API_KEY"] = ""
+os.environ["OPENAI_API_KEY"] = ""
 os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB.as_posix()}"
 os.environ["REDIS_URL"] = ""
 os.environ["ENVIRONMENT"] = "test"
@@ -50,7 +50,7 @@ def test_readiness_endpoint_reports_deploy_status():
     assert body["status"] == "ready"
     assert body["database_connected"] is True
     assert body["environment"] == "test"
-    assert "ANTHROPIC_API_KEY is missing" in body["warnings"][0]
+    assert "OPENAI_API_KEY is missing" in body["warnings"][0]
 
 
 def test_research_endpoint_returns_frontend_compatible_shape():

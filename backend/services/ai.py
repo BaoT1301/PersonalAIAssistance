@@ -23,7 +23,7 @@ def _fallback_payload(
     sources = retrieved_sources or [
         SourceOut(
             title="FusionAI fallback synthesis",
-            snippet="Generated locally because the Anthropic API key is not configured.",
+            snippet="Generated locally because the OpenAI API key is not configured.",
             source_type="system",
         )
     ]
@@ -39,7 +39,7 @@ def _fallback_payload(
             f"Your question — _{query.strip()}_ — can be researched through a structured workflow "
             "that combines source discovery, evidence extraction, synthesis, and citation tracking."
             f"{note}{source_note}\n\n"
-            "To enable full Claude-powered answers, configure a funded `ANTHROPIC_API_KEY`."
+            "To enable full GPT-powered answers, configure a funded `OPENAI_API_KEY`."
         ),
         summary=(
             f"1. Research Focus\n"
@@ -50,7 +50,7 @@ def _fallback_payload(
             "   - The API validates the query, checks the cache, creates or updates a research "
             "session, and stores the user and assistant messages.\n"
             "   - When the model API key is available, LangChain coordinates Wikipedia and web "
-            "search tools before asking Claude to synthesize the final answer.\n\n"
+            "search tools before asking GPT to synthesize the final answer.\n\n"
             "3. Production Behavior\n"
             "   - PostgreSQL persistence keeps session history and research results available "
             "across requests.\n"
@@ -77,7 +77,7 @@ def _fallback_payload(
 @lru_cache(maxsize=1)
 def _get_llm_and_prompt():
     """Build the LLM and prompt once per process and cache them."""
-    from langchain_anthropic import ChatAnthropic
+    from langchain_openai import ChatOpenAI
     from langchain_core.output_parsers import PydanticOutputParser
     from langchain_core.prompts import ChatPromptTemplate
 
@@ -99,7 +99,7 @@ Formatting rules:
   for code. Use second-level headings (##) only when the answer has clearly distinct sections.
 - The "summary" field must stay plain text (a few sentences, no markdown).
 - Include source objects for every source that informs the answer.
-- Set tools_used to include "wikipedia", "search", and/or "claude" as appropriate.
+- Set tools_used to include "wikipedia", "search", and/or "openai" as appropriate.
 - Confidence must be exactly one of: low, medium, or high.
 
 Retrieved source context:
@@ -114,10 +114,10 @@ Chat history:
         ]
     ).partial(format_instructions=parser.get_format_instructions())
 
-    llm = ChatAnthropic(
-        model=settings.anthropic_model,
+    llm = ChatOpenAI(
+        model=settings.openai_model,
         max_tokens=settings.max_tokens,
-        api_key=settings.anthropic_api_key,
+        api_key=settings.openai_api_key,
     )
     return prompt, llm, parser
 
@@ -140,8 +140,8 @@ def run_research(
     retrieved_sources: list[SourceOut] | None = None,
 ) -> AIResearchPayload:
     settings = get_settings()
-    if not settings.anthropic_api_key:
-        return _fallback_payload(query, "ANTHROPIC_API_KEY is missing", retrieved_sources)
+    if not settings.openai_api_key:
+        return _fallback_payload(query, "OPENAI_API_KEY is missing", retrieved_sources)
 
     prompt, llm, parser = _get_llm_and_prompt()
     chain = prompt | llm
@@ -160,7 +160,7 @@ def run_research(
             }
         )
         output = response.content
-        # Claude occasionally returns a list of content blocks instead of a plain string
+        # Some providers return a list of content blocks instead of a plain string
         if isinstance(output, list):
             output = " ".join(
                 block.get("text", "") if isinstance(block, dict) else str(block)
@@ -169,8 +169,8 @@ def run_research(
         payload = _parse_output(str(output), parser)
         if retrieved_sources and not payload.sources:
             payload.sources = retrieved_sources
-        if "claude" not in payload.tools_used:
-            payload.tools_used.append("claude")
+        if "openai" not in payload.tools_used:
+            payload.tools_used.append("openai")
         return payload
     except Exception as exc:
         logger.warning("AI inference failed, using fallback: %s", exc)
@@ -183,7 +183,7 @@ def run_research(
 @lru_cache(maxsize=1)
 def _get_stream_llm_and_prompt():
     """Streaming chain that writes a Markdown answer directly (no JSON wrapper)."""
-    from langchain_anthropic import ChatAnthropic
+    from langchain_openai import ChatOpenAI
     from langchain_core.prompts import ChatPromptTemplate
 
     settings = get_settings()
@@ -213,10 +213,10 @@ Chat history:
         ]
     ).partial(sentinel=_STREAM_SENTINEL)
 
-    llm = ChatAnthropic(
-        model=settings.anthropic_model,
+    llm = ChatOpenAI(
+        model=settings.openai_model,
         max_tokens=settings.max_tokens,
-        api_key=settings.anthropic_api_key,
+        api_key=settings.openai_api_key,
     )
     return prompt, llm
 
@@ -242,8 +242,8 @@ def run_research_stream(
         for item in (chat_history or [])[-8:]
     )
 
-    if not settings.anthropic_api_key:
-        payload = _fallback_payload(query, "ANTHROPIC_API_KEY is missing", sources or None)
+    if not settings.openai_api_key:
+        payload = _fallback_payload(query, "OPENAI_API_KEY is missing", sources or None)
         yield from _stream_static(payload.answer, payload.follow_up_questions)
         return
 

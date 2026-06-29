@@ -38,9 +38,9 @@ class Settings:
     log_level: str = field(default_factory=lambda: os.getenv("LOG_LEVEL", "INFO"))
     request_logging_enabled: bool = field(default_factory=lambda: _env_bool("REQUEST_LOGGING_ENABLED", True))
 
-    anthropic_api_key: str = field(default_factory=lambda: os.getenv("ANTHROPIC_API_KEY", ""))
-    anthropic_model: str = field(
-        default_factory=lambda: os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6")
+    openai_api_key: str = field(default_factory=lambda: os.getenv("OPENAI_API_KEY", ""))
+    openai_model: str = field(
+        default_factory=lambda: os.getenv("OPENAI_MODEL", "gpt-4o-mini")
     )
     max_tokens: int = field(default_factory=lambda: _env_int("MAX_TOKENS", 2000))
 
@@ -100,11 +100,11 @@ class Settings:
             errors.append("MAX_UPLOAD_BYTES must allow at least 1KB uploads.")
         if self.max_document_chars < 1000:
             warnings.append("MAX_DOCUMENT_CHARS is low for document-backed research.")
-        if not self.anthropic_api_key:
+        if not self.openai_api_key:
             if self.is_production:
-                errors.append("ANTHROPIC_API_KEY is required in production.")
+                errors.append("OPENAI_API_KEY is required in production.")
             else:
-                warnings.append("ANTHROPIC_API_KEY is missing; local fallback answers will be used.")
+                warnings.append("OPENAI_API_KEY is missing; local fallback answers will be used.")
 
         if self.is_production:
             if self.database_url.startswith("sqlite"):
