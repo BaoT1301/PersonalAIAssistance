@@ -2,7 +2,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from models import Document, ResearchSession, utc_now
-from schemas import DocumentCreate, DocumentOut, SourceOut
+from schemas import DocumentCreate, DocumentDetail, DocumentOut, SourceOut
 
 
 def _preview(content: str, limit: int = 280) -> str:
@@ -58,11 +58,12 @@ def list_documents(db: Session, session_id: str, owner_id: str) -> list[Document
     return [document_to_out(document) for document in db.scalars(stmt)]
 
 
-def get_document(db: Session, document_id: str, owner_id: str) -> DocumentOut | None:
+def get_document(db: Session, document_id: str, owner_id: str) -> DocumentDetail | None:
     document = db.get(Document, document_id)
     if not document or not document.session or document.session.owner_id != owner_id:
         return None
-    return document_to_out(document)
+    out = document_to_out(document)
+    return DocumentDetail(**out.model_dump(), content_text=document.content_text)
 
 
 def delete_document(db: Session, document_id: str, owner_id: str) -> bool:

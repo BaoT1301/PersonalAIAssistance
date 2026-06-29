@@ -56,6 +56,7 @@ class ResearchResponse(BaseModel):
     session_id: str | None = None
     result_id: str | None = None
     citations: list[SourceOut] = Field(default_factory=list)
+    follow_up_questions: list[str] = Field(default_factory=list)
 
 
 class ChatRequest(BaseModel):
@@ -80,6 +81,7 @@ class ChatResponse(BaseModel):
     latency_ms: int = 0
     result_id: str | None = None
     citations: list[SourceOut] = Field(default_factory=list)
+    follow_up_questions: list[str] = Field(default_factory=list)
 
 
 class SessionCreate(BaseModel):
@@ -100,6 +102,10 @@ class DocumentOut(BaseModel):
     content_length: int
     source_type: str
     created_at: datetime
+
+
+class DocumentDetail(DocumentOut):
+    content_text: str
 
 
 class MessageOut(BaseModel):

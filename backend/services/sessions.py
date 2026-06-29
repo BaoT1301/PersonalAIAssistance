@@ -9,8 +9,11 @@ class WorkspaceAccessError(ValueError):
     pass
 
 
+DEFAULT_SESSION_TITLE = "New research session"
+
+
 def create_session(db: Session, title: str | None = None, owner_id: str = "anonymous") -> ResearchSession:
-    session = ResearchSession(title=title or "New research session", owner_id=owner_id)
+    session = ResearchSession(title=title or DEFAULT_SESSION_TITLE, owner_id=owner_id)
     db.add(session)
     db.commit()
     db.refresh(session)
@@ -28,6 +31,13 @@ def get_or_create_session(
         if existing:
             if existing.owner_id != owner_id:
                 raise WorkspaceAccessError("Session not found")
+            # A session created via document upload starts with the default title;
+            # give it a meaningful name from the first real query.
+            if title and existing.title == DEFAULT_SESSION_TITLE:
+                existing.title = title
+                db.add(existing)
+                db.commit()
+                db.refresh(existing)
             return existing
     return create_session(db, title, owner_id)
 

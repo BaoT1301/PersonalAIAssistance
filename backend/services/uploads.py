@@ -5,7 +5,7 @@ from config import get_settings
 from schemas import DocumentCreate
 
 
-SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf"}
+SUPPORTED_EXTENSIONS = {".txt", ".md", ".pdf", ".docx"}
 
 
 class DocumentUploadError(ValueError):
@@ -35,6 +35,28 @@ def _extract_pdf_text(data: bytes) -> str:
         raise DocumentUploadError("Could not extract text from PDF") from exc
 
 
+def _extract_docx_text(data: bytes) -> str:
+    try:
+        from docx import Document as DocxDocument
+    except Exception as exc:
+        raise DocumentUploadError("Word (.docx) support is not installed") from exc
+
+    try:
+        document = DocxDocument(BytesIO(data))
+        blocks: list[str] = [para.text for para in document.paragraphs if para.text.strip()]
+        # Pull text out of tables too — Word documents often carry data in tables.
+        for table in document.tables:
+            for row in table.rows:
+                cells = [cell.text.strip() for cell in row.cells if cell.text.strip()]
+                if cells:
+                    blocks.append(" | ".join(cells))
+        return "\n\n".join(blocks)
+    except DocumentUploadError:
+        raise
+    except Exception as exc:
+        raise DocumentUploadError("Could not extract text from Word document") from exc
+
+
 def document_from_upload(filename: str, data: bytes, title: str | None = None) -> DocumentCreate:
     settings = get_settings()
     if not filename:
@@ -45,12 +67,17 @@ def document_from_upload(filename: str, data: bytes, title: str | None = None) -
         raise DocumentUploadError("Uploaded file is too large")
 
     suffix = Path(filename).suffix.lower()
+    if suffix == ".doc":
+        raise DocumentUploadError("Legacy .doc files are not supported — save as .docx, .pdf, or .txt")
     if suffix not in SUPPORTED_EXTENSIONS:
-        raise DocumentUploadError("Unsupported file type. Use .txt, .md, or .pdf")
+        raise DocumentUploadError("Unsupported file type. Use .txt, .md, .pdf, or .docx")
 
     if suffix == ".pdf":
         content = _extract_pdf_text(data)
         source_type = "pdf"
+    elif suffix == ".docx":
+        content = _extract_docx_text(data)
+        source_type = "docx"
     else:
         content = _decode_text(data)
         source_type = "document"
