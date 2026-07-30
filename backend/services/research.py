@@ -2,6 +2,7 @@ import logging
 import re
 import time
 from collections.abc import Iterator
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -389,21 +390,40 @@ def stream_deep_research_events(
         document_sources = retrieve_document_context(db, session.id, query)
         aggregated: list[SourceOut] = list(document_sources)
 
-        # 3. Search each sub-question in turn, accumulating de-duplicated sources.
-        for index, sub in enumerate(search_targets):
-            yield {"type": "step", "index": index, "total": len(search_targets), "label": sub, "state": "searching"}
-            web_sources = gather_sources(sub) if needs_search(sub) else []
-            before = len(aggregated)
-            aggregated = _dedupe_source_list([*aggregated, *web_sources])
-            yield {
-                "type": "step",
-                "index": index,
-                "total": len(search_targets),
-                "label": sub,
-                "state": "done",
-                "found": max(len(aggregated) - before, 0),
-            }
+        # 3. Search every sub-question concurrently, so total latency is roughly
+        #    one search instead of N in series — important behind a single prod
+        #    worker where sequential searches would risk a request timeout.
+        results_by_index: dict[int, list[SourceOut]] = {}
+        with ThreadPoolExecutor(max_workers=min(len(search_targets), 4)) as pool:
+            future_to_index: dict = {}
+            for index, sub in enumerate(search_targets):
+                yield {"type": "step", "index": index, "total": len(search_targets), "label": sub, "state": "searching"}
+                if needs_search(sub):
+                    future_to_index[pool.submit(gather_sources, sub)] = index
+                else:
+                    results_by_index[index] = []
+                    yield {"type": "step", "index": index, "total": len(search_targets), "label": sub, "state": "done", "found": 0}
+            for future in as_completed(future_to_index):
+                index = future_to_index[future]
+                try:
+                    found = future.result()
+                except Exception as exc:  # noqa: BLE001 — a failed search step is non-fatal
+                    logger.warning("deep search step %d failed: %s", index, exc)
+                    found = []
+                results_by_index[index] = found
+                yield {
+                    "type": "step",
+                    "index": index,
+                    "total": len(search_targets),
+                    "label": search_targets[index],
+                    "state": "done",
+                    "found": len(found),
+                }
 
+        # Merge in sub-question order for a deterministic, de-duplicated source list.
+        for index in range(len(search_targets)):
+            aggregated.extend(results_by_index.get(index, []))
+        aggregated = _dedupe_source_list(aggregated)
         sources = aggregated[:max_sources]
 
         # 4. Synthesize the report, streaming tokens to the client.
