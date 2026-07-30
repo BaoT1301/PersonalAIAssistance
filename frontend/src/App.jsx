@@ -1,8 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react'
-import { Routes, Route, useNavigate } from 'react-router-dom'
-import { motion, AnimatePresence } from 'framer-motion'
+import { Routes, Route, useNavigate, useSearchParams } from 'react-router-dom'
+import { motion, AnimatePresence, useReducedMotion } from 'motion/react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { Icon } from './ui/Icon'
+import { TearLine, Stamp, SourceStub, LedgerRow, IndexCard } from './ui/paper'
+import { FusionMark } from './ui/Brand'
+import LandingPage from './landing/Landing'
 import './App.css'
 
 // ─── Error Boundary ───────────────────────────────────────────────────────────
@@ -21,23 +25,17 @@ class ErrorBoundary extends React.Component {
   render() {
     if (!this.state.hasError) return this.props.children
     return (
-      <div style={{ minHeight: '100vh', backgroundColor: '#0b1326', color: '#dae2fd', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, padding: 32, fontFamily: 'Inter, sans-serif', textAlign: 'center' }}>
-        <span className="material-symbols-outlined" style={{ fontSize: 48, color: '#ffb4ab' }}>error_outline</span>
-        <p style={{ fontSize: 20, fontWeight: 700, fontFamily: 'Manrope, sans-serif' }}>Something went wrong</p>
-        <p style={{ color: 'rgba(203,195,215,0.6)', maxWidth: 400 }}>{this.state.error?.message || 'An unexpected error occurred.'}</p>
+      <div style={{ minHeight: '100vh', backgroundColor: '#fbf8f2', color: '#1a1613', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 16, padding: 32, fontFamily: "'Hanken Grotesk Variable', sans-serif", textAlign: 'center' }}>
+        <Icon name="error_outline" style={{ fontSize: '48px', color: '#c4402e' }} />
+        <p style={{ fontSize: 22, fontWeight: 600, fontFamily: "'Newsreader Variable', serif" }}>Something went wrong</p>
+        <p style={{ color: '#6f675b', maxWidth: 400 }}>{this.state.error?.message || 'An unexpected error occurred.'}</p>
         <button onClick={() => this.setState({ hasError: false, error: null })}
-          style={{ padding: '10px 24px', borderRadius: 12, background: 'linear-gradient(135deg, #d0bcff, #a078ff)', color: '#340080', fontWeight: 700, fontFamily: 'Manrope, sans-serif', cursor: 'pointer', border: 'none' }}>
+          style={{ padding: '10px 24px', borderRadius: 9, background: '#c4402e', color: '#fbf8f2', fontWeight: 600, fontFamily: "'Hanken Grotesk Variable', sans-serif", cursor: 'pointer', border: 'none' }}>
           Try again
         </button>
       </div>
     )
   }
-}
-
-// ─── Icon helper ──────────────────────────────────────────────────────────────
-
-function Icon({ name, className = '', style }) {
-  return <span className={`material-symbols-outlined ${className}`} style={style}>{name}</span>
 }
 
 // ─── Auto-growing textarea ──────────────────────────────────────────────────
@@ -98,403 +96,34 @@ function AutoGrowTextarea({
 // Renders assistant answers as rich Markdown. Links open safely in a new tab;
 // styling lives in the .fusion-md block in index.css.
 
-function Markdown({ children }) {
+function CitationRef({ n, source }) {
+  const label = source ? (source.title || source.url || `Source ${n}`) : `Source ${n}`
+  const chip = <sup className="ml-px font-mono text-[0.72em] font-semibold text-accent">[{n}]</sup>
+  return source?.url
+    ? <a href={source.url} target="_blank" rel="noopener noreferrer" title={label} className="no-underline hover:opacity-70">{chip}</a>
+    : <span title={label} className="cursor-help">{chip}</span>
+}
+
+function Markdown({ children, sources = [] }) {
+  const text = children || ''
+  // Turn inline [n] markers into clickable citation refs (only when a matching
+  // source exists), so answers cite claim-by-claim like a real research paper.
+  const processed = sources.length
+    ? text.replace(/\[(\d{1,2})\]/g, (m, d) => (Number(d) >= 1 && Number(d) <= sources.length ? `[${d}](#cite-${d})` : m))
+    : text
   return (
     <div className="fusion-md">
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
         components={{
-          a: ({ node, ...props }) => <a target="_blank" rel="noopener noreferrer" {...props} />,
+          a: ({ node, href, children: c, ...props }) => {
+            const match = /^#cite-(\d+)$/.exec(href || '')
+            if (match) return <CitationRef n={Number(match[1])} source={sources[Number(match[1]) - 1]} />
+            return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{c}</a>
+          },
         }}>
-        {children || ''}
+        {processed}
       </ReactMarkdown>
-    </div>
-  )
-}
-
-// ─── Animated Hero Mockup ─────────────────────────────────────────────────────
-
-const DEMO_EXAMPLES = [
-  {
-    query: 'How does quantum entanglement work?',
-    summary: 'Quantum entanglement is a phenomenon where two particles become correlated so that the quantum state of one instantly influences the other — regardless of the distance between them.',
-    sources: ['Wikipedia', 'GPT-4o mini', 'Web Search'],
-  },
-  {
-    query: 'What caused the 2008 financial crisis?',
-    summary: 'The 2008 crisis stemmed from the collapse of the U.S. housing bubble, driven by risky mortgage-backed securities, lax regulation, and excessive leverage across major financial institutions.',
-    sources: ['Wikipedia', 'Web Search'],
-  },
-  {
-    query: 'Explain CRISPR gene editing in simple terms',
-    summary: 'CRISPR-Cas9 acts like molecular scissors — it uses a guide RNA to find a specific DNA sequence, then the Cas9 protein cuts it, allowing scientists to delete, repair, or insert genes with precision.',
-    sources: ['Wikipedia', 'GPT-4o mini', 'Web Search'],
-  },
-  {
-    query: 'Why is the sky blue?',
-    summary: 'Sunlight contains all colors of the spectrum. Earth\'s atmosphere scatters shorter blue wavelengths more than red ones (Rayleigh scattering), so the sky appears blue to our eyes during the day.',
-    sources: ['Wikipedia', 'GPT-4o mini'],
-  },
-  {
-    query: 'How does the human immune system fight viruses?',
-    summary: 'When a virus enters the body, innate immunity responds first with inflammation. Then adaptive immunity kicks in — B cells produce antibodies while T cells destroy infected cells, forming long-term memory.',
-    sources: ['Wikipedia', 'GPT-4o mini', 'Web Search'],
-  },
-  {
-    query: 'What is machine learning and how does it work?',
-    summary: 'Machine learning is a branch of AI where models learn patterns from data rather than following explicit rules. Neural networks adjust millions of internal weights during training to minimize prediction error.',
-    sources: ['Wikipedia', 'GPT-4o mini', 'Web Search'],
-  },
-]
-
-function HeroMockup() {
-  const [phase, setPhase] = useState('typing')
-  const [charCount, setCharCount] = useState(0)
-  const [exampleIndex, setExampleIndex] = useState(0)
-
-  useEffect(() => {
-    let active = true
-    const timeouts = []
-    let currentIndex = 0
-
-    const runCycle = () => {
-      if (!active) return
-      const example = DEMO_EXAMPLES[currentIndex]
-      setExampleIndex(currentIndex)
-      setPhase('typing')
-      setCharCount(0)
-      example.query.split('').forEach((_, i) => {
-        timeouts.push(setTimeout(() => { if (active) setCharCount(i + 1) }, i * 38))
-      })
-      const done = example.query.length * 38 + 400
-      timeouts.push(setTimeout(() => { if (active) setPhase('loading') }, done))
-      timeouts.push(setTimeout(() => { if (active) setPhase('result') }, done + 1400))
-      timeouts.push(setTimeout(() => {
-        currentIndex = (currentIndex + 1) % DEMO_EXAMPLES.length
-        runCycle()
-      }, done + 5500))
-    }
-    runCycle()
-    return () => { active = false; timeouts.forEach(clearTimeout) }
-  }, [])
-
-  return (
-    <div className="bg-white rounded-2xl shadow-2xl overflow-hidden border border-gray-100">
-      <div className="bg-gray-50 px-4 py-3 flex items-center gap-3 border-b border-gray-200">
-        <div className="flex gap-1.5">
-          <div className="w-3 h-3 rounded-full bg-red-400" />
-          <div className="w-3 h-3 rounded-full bg-yellow-400" />
-          <div className="w-3 h-3 rounded-full bg-green-400" />
-        </div>
-        <div className="flex-1 bg-white rounded-md px-3 py-1 text-xs text-gray-400 border border-gray-200">fusionai.app/research</div>
-      </div>
-      <div className="p-6">
-        <div className="flex items-center gap-2 mb-5">
-          <div className="w-7 h-7 rounded-lg bg-violet-600 flex items-center justify-center">
-            <span className="text-white text-xs font-black">F</span>
-          </div>
-          <span className="font-bold text-gray-800 text-sm">FusionAI Research</span>
-        </div>
-        <div className="border border-gray-200 rounded-xl px-4 py-3 flex items-center gap-2 mb-5 bg-gray-50 min-h-[48px]">
-          <span className="text-gray-400 text-sm">🔍</span>
-          <span className="text-gray-700 text-sm flex-1">
-            {DEMO_EXAMPLES[exampleIndex].query.slice(0, charCount)}
-            {phase === 'typing' && <span className="inline-block w-px h-4 bg-violet-500 ml-px animate-pulse align-middle" />}
-          </span>
-          {phase !== 'typing' && (
-            <span className={`text-xs px-2 py-0.5 rounded-full font-semibold ${phase === 'loading' ? 'bg-amber-100 text-amber-700' : 'bg-green-100 text-green-700'}`}>
-              {phase === 'loading' ? 'Searching…' : '✓ Done'}
-            </span>
-          )}
-        </div>
-        <div className="min-h-[140px]">
-          <AnimatePresence mode="wait">
-            {phase === 'loading' && (
-              <motion.div key="loading" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -6 }} transition={{ duration: 0.3 }} className="space-y-3">
-                <div className="flex items-center gap-2 text-xs text-gray-400 mb-4">
-                  <div className="w-3.5 h-3.5 border-2 border-violet-400 border-t-transparent rounded-full animate-spin" />
-                  Gathering from multiple sources…
-                </div>
-                {[90, 75, 55].map((w, i) => (
-                  <motion.div key={i} className="h-3 bg-gray-200 rounded-full" style={{ width: `${w}%` }}
-                    animate={{ opacity: [0.4, 0.9, 0.4] }} transition={{ duration: 1.2, repeat: Infinity, delay: i * 0.2 }} />
-                ))}
-              </motion.div>
-            )}
-            {phase === 'result' && (
-              <motion.div key="result" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.35 }} className="space-y-4">
-                <div className="flex gap-2 flex-wrap">
-                  {DEMO_EXAMPLES[exampleIndex].sources.map((src, i) => (
-                    <motion.span key={src} initial={{ opacity: 0, scale: 0.8 }} animate={{ opacity: 1, scale: 1 }} transition={{ delay: i * 0.1 }}
-                      className="text-xs bg-violet-50 text-violet-700 border border-violet-200 px-2.5 py-0.5 rounded-full font-semibold">
-                      {src}
-                    </motion.span>
-                  ))}
-                </div>
-                <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.25 }} className="bg-gray-50 rounded-xl p-4 border border-gray-100">
-                  <p className="text-gray-700 text-sm leading-relaxed">{DEMO_EXAMPLES[exampleIndex].summary}</p>
-                </motion.div>
-              </motion.div>
-            )}
-          </AnimatePresence>
-        </div>
-        <div className="flex justify-center gap-1.5 pt-3">
-          {DEMO_EXAMPLES.map((_, i) => (
-            <motion.div key={i} className="rounded-full"
-              animate={{ width: i === exampleIndex ? 16 : 6, backgroundColor: i === exampleIndex ? '#7c3aed' : '#d1d5db' }}
-              transition={{ duration: 0.35 }}
-              style={{ height: 6 }} />
-          ))}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-// ─── Landing page ─────────────────────────────────────────────────────────────
-
-function TopNav() {
-  const navigate = useNavigate()
-  return (
-    <motion.header
-      initial={{ y: -24, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      transition={{ duration: 0.5, ease: 'easeOut' }}
-      className="fixed top-0 w-full z-50 bg-slate-900/60 backdrop-blur-lg border-b border-white/5">
-      <nav className="flex justify-between items-center px-6 py-4 max-w-7xl mx-auto">
-        <a href="/" className="text-2xl font-bold tracking-tighter text-slate-50">FusionAI</a>
-        <button onClick={() => navigate('/research')}
-          className="bg-primary hover:bg-primary-container text-white px-6 py-2.5 rounded-lg font-semibold transition-all shadow-lg shadow-primary/20 active:scale-95">
-          Start Researching
-        </button>
-      </nav>
-    </motion.header>
-  )
-}
-
-function HeroSection() {
-  const navigate = useNavigate()
-  return (
-    <section className="relative pt-44 pb-32 px-8 overflow-hidden">
-      <div className="absolute top-20 left-1/3 w-[600px] h-[600px] bg-primary/10 blur-[140px] rounded-full -z-10" />
-      <div className="absolute top-40 right-10 w-[400px] h-[400px] bg-violet-700/10 blur-[120px] rounded-full -z-10" />
-      <div className="max-w-7xl mx-auto grid grid-cols-1 lg:grid-cols-12 gap-16 items-center">
-        <div className="lg:col-span-6 z-10">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.55, delay: 0.15 }}
-            className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-primary/10 text-primary text-xs font-bold tracking-widest uppercase mb-8 border border-primary/20">
-            <span className="w-1.5 h-1.5 rounded-full bg-primary animate-pulse" />
-            AI-Powered Research
-          </motion.div>
-          <motion.h1
-            initial={{ opacity: 0, y: 28 }} animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.65, delay: 0.25 }}
-            className="text-5xl md:text-7xl font-extrabold tracking-tighter leading-[0.92] mb-8 text-on-surface">
-            Research smarter,{' '}
-            <span className="text-primary">not harder.</span>
-          </motion.h1>
-          <motion.p
-            initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.55, delay: 0.38 }}
-            className="text-lg md:text-xl text-on-surface-variant max-w-lg mb-10 leading-relaxed">
-            FusionAI combines Wikipedia, web search, and GPT-4o mini to synthesize multi-source answers in seconds.
-          </motion.p>
-          <motion.div
-            initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.5 }}>
-            <button onClick={() => navigate('/research')}
-              className="hero-gradient text-white px-10 py-4 rounded-xl font-bold text-lg shadow-2xl shadow-primary/30 transition-all hover:scale-[1.02] active:scale-95">
-              Start Researching →
-            </button>
-          </motion.div>
-        </div>
-        <motion.div
-          initial={{ opacity: 0, x: 32 }} animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.7, delay: 0.3, ease: 'easeOut' }}
-          className="lg:col-span-6 relative">
-          <motion.div animate={{ y: [0, -14, 0], rotate: [0, 0.8, 0, -0.8, 0] }} transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }}>
-            <HeroMockup />
-          </motion.div>
-          <motion.div className="absolute -top-16 -right-16 w-80 h-80 bg-primary/20 blur-[100px] rounded-full -z-10"
-            animate={{ opacity: [0.6, 1, 0.6], scale: [1, 1.08, 1] }} transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut' }} />
-          <motion.div className="absolute -bottom-16 -left-16 w-72 h-72 bg-violet-600/10 blur-[90px] rounded-full -z-10"
-            animate={{ opacity: [0.4, 0.8, 0.4], scale: [1, 1.06, 1] }} transition={{ duration: 6, repeat: Infinity, ease: 'easeInOut', delay: 0.5 }} />
-        </motion.div>
-      </div>
-    </section>
-  )
-}
-
-function SourcesStrip() {
-  return (
-    <motion.section
-      initial={{ opacity: 0, y: 24 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={{ once: true, margin: '-60px' }}
-      transition={{ duration: 0.6 }}
-      className="py-10 bg-slate-950/50 border-y border-white/5">
-      <div className="max-w-7xl mx-auto px-8">
-        <p className="text-center text-[10px] font-bold tracking-[0.2em] uppercase text-slate-500 mb-6">Powered by</p>
-        <div className="flex flex-wrap justify-center items-center gap-10 md:gap-20 opacity-40 grayscale contrast-125">
-          {['Wikipedia', 'GPT-4o mini', 'DuckDuckGo', 'LangChain', 'FastAPI'].map((n, i) => (
-            <motion.span
-              key={n}
-              initial={{ opacity: 0, y: 10 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={{ once: true }}
-              transition={{ duration: 0.4, delay: i * 0.08 }}
-              className="text-base font-black tracking-tighter text-slate-300">
-              {n}
-            </motion.span>
-          ))}
-        </div>
-      </div>
-    </motion.section>
-  )
-}
-
-function FeatureGrid() {
-  return (
-    <section className="py-28 px-8 bg-surface">
-      <div className="max-w-7xl mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: 28 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={{ once: true, margin: '-80px' }}
-          transition={{ duration: 0.6 }}
-          className="text-center mb-16">
-          <h2 className="text-4xl md:text-5xl font-extrabold tracking-tighter text-on-surface mb-4">Everything you need to research deeply</h2>
-          <p className="text-on-surface-variant text-lg max-w-xl mx-auto">One tool that pulls from multiple sources, verifies claims, and presents clean answers.</p>
-        </motion.div>
-        <div className="grid grid-cols-1 md:grid-cols-12 gap-6">
-          <motion.div
-            initial={{ opacity: 0, y: 36 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            whileHover={{ y: -8, scale: 1.015, transition: { type: 'spring', stiffness: 320, damping: 22 } }}
-            viewport={{ once: true, margin: '-60px' }}
-            transition={{ duration: 0.6, delay: 0.05 }}
-            className="md:col-span-8 bg-surface-container-low border border-white/5 rounded-3xl p-12 flex flex-col gap-6 cursor-default">
-            <Icon name="travel_explore" className="text-primary text-4xl" />
-            <div>
-              <h3 className="text-3xl font-bold tracking-tight mb-4 text-slate-50">Multi-Source Search</h3>
-              <p className="text-on-surface-variant text-lg leading-relaxed">Every query hits Wikipedia, the open web, and GPT-4o mini simultaneously — then synthesizes a single coherent answer.</p>
-            </div>
-          </motion.div>
-          <motion.div
-            initial={{ opacity: 0, y: 36 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            whileHover={{ y: -8, scale: 1.02, transition: { type: 'spring', stiffness: 320, damping: 22 } }}
-            viewport={{ once: true, margin: '-60px' }}
-            transition={{ duration: 0.6, delay: 0.15 }}
-            className="md:col-span-4 bg-primary text-white rounded-3xl p-10 flex flex-col justify-between shadow-xl shadow-primary/20 cursor-default">
-            <div>
-              <Icon name="verified_user" className="text-white text-4xl mb-6" />
-              <h3 className="text-2xl font-bold tracking-tight mb-4">Source Transparency</h3>
-              <p className="text-white/80 leading-relaxed">Every answer shows exactly which sources it drew from.</p>
-            </div>
-            <div className="mt-8 pt-8 border-t border-white/20">
-              <div className="flex items-baseline gap-2">
-                <span className="text-3xl font-bold">3+</span>
-                <span className="text-xs uppercase tracking-widest opacity-60">sources per answer</span>
-              </div>
-            </div>
-          </motion.div>
-          <motion.div
-            initial={{ opacity: 0, y: 36 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            whileHover={{ y: -8, scale: 1.02, transition: { type: 'spring', stiffness: 320, damping: 22 } }}
-            viewport={{ once: true, margin: '-60px' }}
-            transition={{ duration: 0.6, delay: 0.1 }}
-            className="md:col-span-4 bg-surface-container-low border border-white/5 rounded-3xl p-10 flex flex-col gap-6 cursor-default">
-            <Icon name="chat" className="text-primary text-4xl" />
-            <div>
-              <h3 className="text-2xl font-bold tracking-tight mb-3 text-slate-50">Persistent Sessions</h3>
-              <p className="text-on-surface-variant leading-relaxed">Sessions are saved so you can pick up right where you left off.</p>
-            </div>
-          </motion.div>
-          <motion.div
-            initial={{ opacity: 0, y: 36 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            whileHover={{ y: -8, scale: 1.015, transition: { type: 'spring', stiffness: 320, damping: 22 } }}
-            viewport={{ once: true, margin: '-60px' }}
-            transition={{ duration: 0.6, delay: 0.2 }}
-            className="md:col-span-8 bg-surface-container-low border border-white/5 rounded-3xl p-10 flex flex-col gap-6 cursor-default">
-            <Icon name="bolt" className="text-primary text-4xl" />
-            <div>
-              <h3 className="text-2xl font-bold tracking-tight mb-3 text-slate-50">Fast & Precise</h3>
-              <p className="text-on-surface-variant leading-relaxed">Answers arrive in seconds. Built on FastAPI with async processing.</p>
-            </div>
-          </motion.div>
-        </div>
-      </div>
-    </section>
-  )
-}
-
-function CTASection() {
-  const navigate = useNavigate()
-  return (
-    <section className="py-28 px-8">
-      <motion.div
-        initial={{ opacity: 0, y: 40 }}
-        whileInView={{ opacity: 1, y: 0 }}
-        viewport={{ once: true, margin: '-80px' }}
-        transition={{ duration: 0.7, ease: 'easeOut' }}
-        className="max-w-4xl mx-auto bg-slate-900 border border-white/5 rounded-[3rem] p-14 md:p-20 text-center relative overflow-hidden">
-        <div className="absolute top-0 left-1/4 w-80 h-80 bg-primary/20 blur-[100px] rounded-full" />
-        <div className="absolute bottom-0 right-1/4 w-80 h-80 bg-violet-600/10 blur-[100px] rounded-full" />
-        <div className="relative z-10">
-          <motion.h2
-            initial={{ opacity: 0, y: 16 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5, delay: 0.15 }}
-            className="text-white text-4xl md:text-6xl font-extrabold tracking-tighter mb-6">
-            Ready to start?
-          </motion.h2>
-          <motion.p
-            initial={{ opacity: 0, y: 12 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.5, delay: 0.25 }}
-            className="text-slate-400 text-lg max-w-xl mx-auto mb-10 leading-relaxed">
-            Ask anything. FusionAI will find, verify, and explain it.
-          </motion.p>
-          <motion.div
-            initial={{ opacity: 0, scale: 0.95 }}
-            whileInView={{ opacity: 1, scale: 1 }}
-            viewport={{ once: true }}
-            transition={{ duration: 0.4, delay: 0.35 }}>
-            <button onClick={() => navigate('/research')}
-              className="bg-white text-slate-950 px-12 py-4 rounded-xl font-bold text-lg hover:bg-slate-100 transition-all active:scale-95">
-              Start Researching →
-            </button>
-          </motion.div>
-        </div>
-      </motion.div>
-    </section>
-  )
-}
-
-function Footer() {
-  return (
-    <footer className="w-full py-10 px-8 bg-slate-950 border-t border-slate-900 text-sm">
-      <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-4">
-        <span className="text-lg font-black text-slate-100">FusionAI</span>
-        <p className="text-slate-500 text-xs text-center">Built with React · FastAPI · LangChain · GPT-4o mini</p>
-        <p className="text-slate-600 text-xs">© 2025 FusionAI</p>
-      </div>
-    </footer>
-  )
-}
-
-function LandingPage() {
-  return (
-    <div className="bg-surface font-body text-on-surface antialiased">
-      <TopNav />
-      <main><HeroSection /><SourcesStrip /><FeatureGrid /><CTASection /></main>
-      <Footer />
     </div>
   )
 }
@@ -502,15 +131,45 @@ function LandingPage() {
 // ─── Research app shared utilities ────────────────────────────────────────────
 
 const WORKSPACE_ID = import.meta.env.VITE_WORKSPACE_ID || 'web-client'
-// VITE_API_URL: set to your backend origin in production (e.g. https://api.example.com).
-// Leave unset in development — Vite's dev-server proxy handles /api/* → localhost:5001.
+// VITE_API_URL: set to your backend/gateway origin in production.
+// Leave unset in development — Vite's dev-server proxy handles /api/* and /auth/*.
 const API_BASE = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '')
 
+// ─── Auth (opt-in; enabled when running behind the gateway) ────────────────────
+// Set VITE_AUTH_ENABLED=true and point the proxy at the gateway to require login.
+const AUTH_ENABLED = import.meta.env.VITE_AUTH_ENABLED === 'true'
+const TOKEN_KEY = 'fusionai_token'
+const USER_KEY = 'fusionai_user'
+function getToken() { return localStorage.getItem(TOKEN_KEY) }
+function getUser() { return localStorage.getItem(USER_KEY) }
+function setAuth(token, user) {
+  if (token) { localStorage.setItem(TOKEN_KEY, token); if (user) localStorage.setItem(USER_KEY, user) }
+  else { localStorage.removeItem(TOKEN_KEY); localStorage.removeItem(USER_KEY) }
+}
+async function authRequest(path, body) {
+  const res = await fetch(`${API_BASE}${path}`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body),
+  })
+  const data = await res.json().catch(() => ({}))
+  if (!res.ok) throw new Error(data.message || data.detail || data.error || `Request failed (${res.status})`)
+  return data
+}
+function baseHeaders(extra = {}) {
+  const headers = { 'x-fusion-workspace-id': WORKSPACE_ID, ...extra }
+  const token = getToken()
+  if (token) headers['Authorization'] = `Bearer ${token}`
+  return headers
+}
+function handleUnauthorized(res) {
+  if (res.status === 401 && AUTH_ENABLED) { setAuth(null); window.location.reload() }
+}
+
 async function apiCall(path, options = {}) {
-  const headers = { 'x-fusion-workspace-id': WORKSPACE_ID, ...options.headers }
+  const headers = baseHeaders(options.headers)
   if (options.body) headers['Content-Type'] = 'application/json'
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers })
   if (!res.ok) {
+    handleUnauthorized(res)
     const err = await res.json().catch(() => ({}))
     const raw = err.detail || err.error || `Request failed (${res.status})`
     const message = typeof raw === 'string' ? raw : JSON.stringify(raw)
@@ -527,12 +186,9 @@ async function uploadFile(path, file, fields = {}) {
   for (const [key, value] of Object.entries(fields)) {
     if (value != null) form.append(key, value)
   }
-  const res = await fetch(`${API_BASE}${path}`, {
-    method: 'POST',
-    headers: { 'x-fusion-workspace-id': WORKSPACE_ID },
-    body: form,
-  })
+  const res = await fetch(`${API_BASE}${path}`, { method: 'POST', headers: baseHeaders(), body: form })
   if (!res.ok) {
+    handleUnauthorized(res)
     const err = await res.json().catch(() => ({}))
     const raw = err.detail || err.error || `Upload failed (${res.status})`
     throw new Error(typeof raw === 'string' ? raw : JSON.stringify(raw))
@@ -544,11 +200,12 @@ async function uploadFile(path, file, fields = {}) {
 async function streamResearch(body, { signal, onEvent }) {
   const res = await fetch(`${API_BASE}/api/research/stream`, {
     method: 'POST',
-    headers: { 'x-fusion-workspace-id': WORKSPACE_ID, 'Content-Type': 'application/json' },
+    headers: baseHeaders({ 'Content-Type': 'application/json' }),
     body: JSON.stringify(body),
     signal,
   })
   if (!res.ok || !res.body) {
+    handleUnauthorized(res)
     const err = await res.json().catch(() => ({}))
     const raw = err.detail || err.error || `Request failed (${res.status})`
     throw new Error(typeof raw === 'string' ? raw : JSON.stringify(raw))
@@ -622,66 +279,49 @@ function sourceIcon(sourceType) {
 
 function ResearchSidebar({ activeNav, onNavChange, sessions, onSessionClick }) {
   const NAV = [
-    { id: 'new', icon: 'add_circle', label: 'New Research' },
+    { id: 'new', icon: 'add_circle', label: 'New research' },
     { id: 'library', icon: 'auto_stories', label: 'Library' },
     { id: 'insights', icon: 'monitoring', label: 'Insights' },
     { id: 'settings', icon: 'settings', label: 'Settings' },
   ]
   return (
-    <aside className="hidden md:flex h-screen w-72 flex-col fixed left-0 top-0 z-40 border-r"
-      style={{ backgroundColor: '#131b2e', borderColor: 'rgba(73,68,84,0.1)' }}>
-      <div className="flex flex-col p-4 gap-1 h-full overflow-hidden">
+    <aside className="hidden md:flex h-screen w-72 flex-col fixed left-0 top-0 z-40 border-r border-line bg-paper-2">
+      <div className="flex h-full flex-col overflow-hidden">
         {/* Logo */}
-        <div className="flex items-center gap-3 px-2 py-5 mb-2 shrink-0">
-          <div className="relative shrink-0">
-            {/* Pulsing glow ring */}
-            <motion.div
-              className="absolute inset-0 rounded-xl"
-              style={{ background: 'linear-gradient(135deg, #d0bcff, #a078ff)', filter: 'blur(8px)' }}
-              animate={{ opacity: [0.4, 0.8, 0.4], scale: [0.9, 1.1, 0.9] }}
-              transition={{ duration: 2.8, repeat: Infinity, ease: 'easeInOut' }}
-            />
-            <motion.div
-              className="w-10 h-10 rounded-xl flex items-center justify-center shadow-lg relative"
-              style={{ background: 'linear-gradient(135deg, #d0bcff, #a078ff)' }}
-              animate={{ rotate: [0, 8, -5, 0] }}
-              transition={{ duration: 5, repeat: Infinity, ease: 'easeInOut' }}>
-              <Icon name="auto_awesome" style={{ color: '#340080', fontVariationSettings: "'FILL' 1", fontSize: '20px' }} />
-            </motion.div>
-          </div>
-          <div>
-            <h1 className="text-lg font-extrabold tracking-tight" style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>FusionAI</h1>
-            <p className="text-[10px] uppercase tracking-widest" style={{ color: 'rgba(218,226,253,0.35)', fontFamily: 'Manrope, sans-serif' }}>Research v1.0</p>
-          </div>
+        <div className="flex h-16 shrink-0 items-center justify-between gap-3 border-b border-line px-5">
+          <span className="inline-flex items-center gap-2.5">
+            <FusionMark size={24} />
+            <span className="font-serif text-lg font-semibold tracking-tight text-ink">FusionAI</span>
+          </span>
+          <Stamp label="v1" tone="muted" rotate={-4} className="!px-1.5 !text-[8px] !tracking-[0.16em]" />
         </div>
 
-        {/* Nav */}
-        <nav className="flex flex-col gap-0.5 shrink-0">
+        {/* Nav — ledger index */}
+        <nav className="flex shrink-0 flex-col px-3 pt-4">
           {NAV.map(item => {
             const active = activeNav === item.id
             return (
               <button key={item.id} onClick={() => onNavChange(item.id)}
-                className="flex items-center gap-3 px-4 py-3 rounded-xl text-sm font-medium transition-all duration-150 w-full text-left hover:bg-white/5"
-                style={active ? { backgroundColor: '#2d3449', color: '#d0bcff', fontWeight: 700 } : { color: 'rgba(218,226,253,0.5)' }}>
-                <Icon name={item.icon} style={active ? { fontVariationSettings: "'FILL' 1" } : {}} />
-                <span style={{ fontFamily: 'Manrope, sans-serif' }}>{item.label}</span>
+                className={`flex items-center gap-3 border-l-2 px-3 py-2.5 text-left transition-colors ${active ? 'border-accent bg-paper text-accent' : 'border-transparent text-muted hover:bg-paper/60 hover:text-ink'}`}>
+                <Icon name={item.icon} style={{ fontSize: '17px' }} weight={active ? 'fill' : 'regular'} />
+                <span className="font-mono text-[11px] uppercase tracking-[0.14em]">{item.label}</span>
               </button>
             )
           })}
         </nav>
 
-        {/* Recent sessions */}
+        {/* Recent — tearline-separated ledger list */}
         {sessions.length > 0 && (
-          <div className="mt-4 flex-1 min-h-0 flex flex-col">
-            <p className="px-4 text-[10px] uppercase tracking-widest mb-2 font-bold shrink-0"
-              style={{ color: 'rgba(218,226,253,0.25)', fontFamily: 'Manrope, sans-serif' }}>Recent</p>
-            <div className="flex-1 overflow-y-auto flex flex-col gap-0.5">
-              {sessions.slice(0, 12).map(s => (
+          <div className="mt-5 flex min-h-0 flex-1 flex-col px-4">
+            <TearLine />
+            <p className="shrink-0 pb-2 pt-4 font-mono text-[10px] uppercase tracking-[0.16em] text-faint">Recent</p>
+            <div className="flex-1 overflow-y-auto">
+              {sessions.slice(0, 14).map((s, i) => (
                 <button key={s.id} onClick={() => onSessionClick(s)}
-                  className="flex items-center gap-2 px-4 py-2 rounded-xl text-xs truncate transition-all text-left w-full hover:bg-white/5"
-                  style={{ color: 'rgba(218,226,253,0.45)', fontFamily: 'Manrope, sans-serif' }} title={s.title}>
-                  <Icon name="chat_bubble" style={{ fontSize: '14px', flexShrink: 0 }} />
-                  <span className="truncate">{s.title || 'Untitled session'}</span>
+                  className="group flex w-full items-center gap-2.5 border-b border-line/70 py-2 text-left transition-colors hover:bg-paper/60"
+                  title={s.title}>
+                  <span className="w-5 shrink-0 font-mono text-[10px] text-faint">{String(i + 1).padStart(2, '0')}</span>
+                  <span className="truncate font-sans text-[13px] text-muted group-hover:text-ink">{s.title || 'Untitled session'}</span>
                 </button>
               ))}
             </div>
@@ -714,11 +354,60 @@ function AttachButton({ onSelect, disabled }) {
         disabled={disabled}
         onClick={() => inputRef.current?.click()}
         title="Attach a document (PDF, Word, TXT, MD)"
-        className="p-3 rounded-2xl hover:bg-white/5 transition-colors disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-        style={{ color: 'rgba(208,188,255,0.65)' }}>
+        className="shrink-0 rounded-sm p-2.5 transition-colors hover:bg-paper disabled:cursor-not-allowed disabled:opacity-40"
+        style={{ color: 'rgba(196,64,46,0.75)' }}>
         <Icon name="attach_file" />
       </button>
     </>
+  )
+}
+
+function ReuseButton({ onReuse, existingIds, disabled }) {
+  const [open, setOpen] = useState(false)
+  const [docs, setDocs] = useState(null)
+  const [loading, setLoading] = useState(false)
+
+  async function toggle() {
+    if (open) { setOpen(false); return }
+    setOpen(true); setLoading(true)
+    try { setDocs(await apiCall('/api/documents')) } catch { setDocs([]) } finally { setLoading(false) }
+  }
+
+  const seen = new Set()
+  const available = (docs || []).filter(d => {
+    if (existingIds.has(d.id) || seen.has(d.title)) return false
+    seen.add(d.title)
+    return true
+  })
+
+  return (
+    <div className="relative shrink-0">
+      <button type="button" onClick={toggle} disabled={disabled} aria-label="Reuse a document"
+        title="Reuse a document you uploaded before"
+        className="rounded-sm p-2.5 text-muted transition-colors hover:bg-paper hover:text-ink disabled:cursor-not-allowed disabled:opacity-40">
+        <Icon name="auto_stories" style={{ fontSize: '18px' }} />
+      </button>
+      {open && (
+        <>
+          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="absolute bottom-full left-0 z-40 mb-2 max-h-64 w-64 overflow-y-auto rounded-md border border-line bg-paper shadow-paper">
+            <p className="sticky top-0 border-b border-line bg-paper px-3 py-2 font-mono text-[10px] uppercase tracking-[0.14em] text-faint">Your documents</p>
+            {loading ? (
+              <p className="px-3 py-3 font-sans text-sm text-muted">Loading…</p>
+            ) : available.length === 0 ? (
+              <p className="px-3 py-3 font-sans text-sm text-muted">No documents to reuse yet.</p>
+            ) : available.map(d => (
+              <button key={d.id} type="button" onClick={() => { onReuse(d.id); setOpen(false) }}
+                className="flex w-full items-center gap-2 border-b border-line px-3 py-2 text-left transition-colors last:border-b-0 hover:bg-paper-2">
+                <Icon name={docIcon(d.source_type)} style={{ color: '#c4402e', fontSize: '15px' }} />
+                <span className="min-w-0 flex-1 truncate font-sans text-sm text-ink">{d.title}</span>
+                <span className="shrink-0 font-mono text-[10px] text-faint">{(d.content_length / 1000).toFixed(0)}k</span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -728,31 +417,31 @@ function DocumentChips({ documents, pending, error, onRemove, removingIds, onVie
     <div className="flex flex-wrap gap-2 mb-3">
       {documents.map(doc => (
         <div key={doc.id}
-          className="flex items-center gap-2 pl-2.5 pr-1.5 py-1.5 rounded-xl border text-xs"
-          style={{ backgroundColor: 'rgba(19,27,46,0.75)', borderColor: 'rgba(208,188,255,0.2)', color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>
-          <Icon name={docIcon(doc.source_type)} style={{ fontSize: '16px', color: '#d0bcff' }} />
+          className="flex items-center gap-2 pl-2.5 pr-1.5 py-1.5 rounded-md border text-xs"
+          style={{ backgroundColor: 'rgba(243,237,225,0.75)', borderColor: 'rgba(196,64,46,0.2)', color: '#1a1613', fontFamily: "'Hanken Grotesk Variable', sans-serif" }}>
+          <Icon name={docIcon(doc.source_type)} style={{ fontSize: '16px', color: '#c4402e' }} />
           <button type="button" onClick={() => onView?.(doc.id)}
             className="max-w-[180px] truncate font-semibold hover:underline" title={`View “${doc.title}”`}>
             {doc.title}
           </button>
-          <span style={{ color: 'rgba(203,195,215,0.4)' }}>{(doc.content_length / 1000).toFixed(1)}k chars</span>
+          <span style={{ color: 'rgba(111,103,91,0.4)' }}>{(doc.content_length / 1000).toFixed(1)}k chars</span>
           <button type="button" onClick={() => onRemove(doc.id)} disabled={removingIds.has(doc.id)}
-            className="w-5 h-5 rounded-full flex items-center justify-center hover:bg-white/10 disabled:opacity-50 transition-colors"
+            className="grid h-5 w-5 place-items-center rounded-full transition-colors hover:bg-paper disabled:opacity-50"
             aria-label={`Remove ${doc.title}`} title="Remove document">
-            <Icon name={removingIds.has(doc.id) ? 'hourglass_empty' : 'close'} style={{ fontSize: '13px', color: 'rgba(203,195,215,0.6)' }} />
+            <Icon name={removingIds.has(doc.id) ? 'hourglass_empty' : 'close'} style={{ fontSize: '13px', color: 'rgba(111,103,91,0.6)' }} />
           </button>
         </div>
       ))}
       {pending && (
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs"
-          style={{ backgroundColor: 'rgba(19,27,46,0.75)', borderColor: 'rgba(208,188,255,0.2)', color: 'rgba(218,226,253,0.7)', fontFamily: 'Manrope, sans-serif' }}>
-          <div className="w-3 h-3 border-2 rounded-full animate-spin" style={{ borderColor: '#d0bcff', borderTopColor: 'transparent' }} />
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs"
+          style={{ backgroundColor: 'rgba(243,237,225,0.75)', borderColor: 'rgba(196,64,46,0.2)', color: 'rgba(26,22,19,0.7)', fontFamily: "'Hanken Grotesk Variable', sans-serif" }}>
+          <div className="w-3 h-3 border-2 rounded-full animate-spin" style={{ borderColor: '#c4402e', borderTopColor: 'transparent' }} />
           <span className="max-w-[180px] truncate">Reading {pending}…</span>
         </div>
       )}
       {error && (
-        <div className="flex items-center gap-2 px-3 py-1.5 rounded-xl border text-xs"
-          style={{ backgroundColor: 'rgba(255,180,171,0.08)', borderColor: 'rgba(255,180,171,0.35)', color: '#ffb4ab', fontFamily: 'Inter, sans-serif' }}>
+        <div className="flex items-center gap-2 px-3 py-1.5 rounded-md border text-xs"
+          style={{ backgroundColor: 'rgba(196,64,46,0.08)', borderColor: 'rgba(196,64,46,0.35)', color: '#c4402e', fontFamily: "'Hanken Grotesk Variable', sans-serif" }}>
           <Icon name="error_outline" style={{ fontSize: '14px' }} />
           <span className="max-w-[260px] truncate" title={error}>{error}</span>
         </div>
@@ -772,30 +461,29 @@ function DocViewerModal({ doc, onClose }) {
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
       className="fixed inset-0 z-[60] flex items-center justify-center p-4"
-      style={{ backgroundColor: 'rgba(3,6,23,0.7)', backdropFilter: 'blur(4px)' }}
+      style={{ backgroundColor: 'rgba(26,22,19,0.45)' }}
       onClick={onClose}>
       <motion.div
         initial={{ opacity: 0, scale: 0.96, y: 10 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.96 }}
         onClick={e => e.stopPropagation()}
-        className="w-full max-w-2xl max-h-[80vh] rounded-2xl border flex flex-col overflow-hidden"
-        style={{ backgroundColor: '#131b2e', borderColor: 'rgba(73,68,84,0.3)' }}>
-        <div className="flex items-center justify-between gap-3 px-5 py-4 border-b shrink-0" style={{ borderColor: 'rgba(73,68,84,0.2)' }}>
-          <div className="flex items-center gap-3 min-w-0">
-            <Icon name={docIcon(doc.source_type)} style={{ color: '#d0bcff' }} />
+        className="flex max-h-[80vh] w-full max-w-2xl flex-col overflow-hidden rounded-md border border-line bg-paper shadow-paper">
+        <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-5 py-4">
+          <div className="flex min-w-0 items-center gap-3">
+            <Icon name={docIcon(doc.source_type)} style={{ color: '#c4402e' }} />
             <div className="min-w-0">
-              <p className="font-bold truncate" style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>{doc.title}</p>
-              <p className="text-[11px]" style={{ color: 'rgba(203,195,215,0.5)', fontFamily: 'Inter, sans-serif' }}>
-                {doc.source_type.toUpperCase()} · {doc.content_length.toLocaleString()} characters extracted
+              <p className="truncate font-serif text-base font-semibold text-ink">{doc.title}</p>
+              <p className="font-mono text-[10px] uppercase tracking-[0.14em] text-faint">
+                {doc.source_type} · {doc.content_length.toLocaleString()} chars extracted
               </p>
             </div>
           </div>
           <button onClick={onClose} aria-label="Close document viewer"
-            className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/10 shrink-0" style={{ color: 'rgba(203,195,215,0.6)' }}>
+            className="grid h-8 w-8 shrink-0 place-items-center rounded-sm text-muted transition-colors hover:bg-paper-2 hover:text-ink">
             <Icon name="close" />
           </button>
         </div>
-        <div className="overflow-y-auto px-5 py-4">
-          <pre className="whitespace-pre-wrap text-sm leading-relaxed" style={{ color: '#cbc3d7', fontFamily: 'Inter, sans-serif' }}>
+        <div className="overflow-y-auto bg-paper-2 px-5 py-4">
+          <pre className="whitespace-pre-wrap font-mono text-[12px] leading-relaxed text-muted">
             {doc.content_text}
           </pre>
         </div>
@@ -806,7 +494,7 @@ function DocViewerModal({ doc, onClose }) {
 
 // ─── New Research View ────────────────────────────────────────────────────────
 
-function NewResearchView({ onSubmit, isLoading, documents, onUpload, onRemoveDoc, onViewDoc, docPending, docError, removingDocIds }) {
+function NewResearchView({ onSubmit, isLoading, documents, onUpload, onReuse, onRemoveDoc, onViewDoc, docPending, docError, removingDocIds }) {
   const [query, setQuery] = useState('')
 
   function handleSubmit(e) {
@@ -817,131 +505,86 @@ function NewResearchView({ onSubmit, isLoading, documents, onUpload, onRemoveDoc
 
   return (
     <div className="flex-1 overflow-y-auto flex flex-col items-center justify-center px-6 py-12 relative">
-      {/* Animated floating background orbs */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <motion.div
-          className="absolute top-1/3 left-1/3 w-[600px] h-[600px] rounded-full blur-[130px]"
-          style={{ backgroundColor: 'rgba(208,188,255,0.05)' }}
-          animate={{ x: [0, 40, -20, 0], y: [0, -25, 35, 0], scale: [1, 1.06, 0.97, 1] }}
-          transition={{ duration: 14, repeat: Infinity, ease: 'easeInOut' }}
-        />
-        <motion.div
-          className="absolute top-1/2 right-1/4 w-[360px] h-[360px] rounded-full blur-[110px]"
-          style={{ backgroundColor: 'rgba(160,120,255,0.06)' }}
-          animate={{ x: [0, -30, 15, 0], y: [0, 22, -30, 0], scale: [1, 1.08, 0.95, 1] }}
-          transition={{ duration: 11, repeat: Infinity, ease: 'easeInOut', delay: 1.5 }}
-        />
-        <motion.div
-          className="absolute bottom-1/3 left-1/5 w-[280px] h-[280px] rounded-full blur-[100px]"
-          style={{ backgroundColor: 'rgba(130,90,255,0.04)' }}
-          animate={{ x: [0, 20, -15, 0], y: [0, -20, 18, 0] }}
-          transition={{ duration: 9, repeat: Infinity, ease: 'easeInOut', delay: 3 }}
-        />
-      </div>
-
       <div className="w-full max-w-3xl relative z-10 flex flex-col items-center">
-        {/* Heading — staggered entrance */}
-        <div className="text-center mb-10">
-          <motion.h2
-            initial={{ opacity: 0, y: 24 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, ease: 'easeOut' }}
-            className="text-5xl md:text-6xl font-extrabold tracking-tighter mb-5"
-            style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif', lineHeight: 1.05 }}>
-            Research Assistant<br />
-            <motion.span
-              animate={{ opacity: [0.8, 1, 0.8] }}
-              transition={{ duration: 3.5, repeat: Infinity, ease: 'easeInOut' }}
-              style={{ background: 'linear-gradient(to right, #d0bcff, #a078ff)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent' }}>
-              Reimagined
-            </motion.span>
-          </motion.h2>
-          <motion.p
-            initial={{ opacity: 0, y: 16 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.55, delay: 0.15, ease: 'easeOut' }}
-            className="text-lg max-w-xl mx-auto" style={{ color: '#cbc3d7', fontFamily: 'Inter, sans-serif' }}>
-            Harness AI to synthesize information from Wikipedia, the web, and GPT — all at once.
-          </motion.p>
-        </div>
+        {/* Heading */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.55, ease: 'easeOut' }}
+          className="mb-10 text-center">
+          <div className="mb-6 flex justify-center"><FusionMark size={40} /></div>
+          <h2 className="font-serif text-5xl font-semibold tracking-tight text-ink md:text-6xl" style={{ lineHeight: 1.02 }}>
+            What are we <em className="not-italic ruled">researching</em>?
+          </h2>
+          <p className="mx-auto mt-5 max-w-xl font-sans text-lg text-muted">
+            Ask anything. FusionAI reads Wikipedia, the open web, and your files, then prints one cited answer.
+          </p>
+        </motion.div>
 
-        {/* Search bar — entrance */}
+        {/* Composer — research request slip */}
         <motion.form
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.55, delay: 0.28, ease: 'easeOut' }}
-          onSubmit={handleSubmit} className="w-full relative group mb-12">
-          <div className="absolute -inset-0.5 rounded-2xl blur opacity-20 group-focus-within:opacity-60 transition duration-500 pointer-events-none"
-            style={{ background: 'linear-gradient(to right, rgba(208,188,255,0.5), rgba(160,120,255,0.5))' }} />
-          <div className="relative backdrop-blur-2xl border rounded-2xl flex items-end gap-1 p-2 min-h-[72px]"
-            style={{ backgroundColor: 'rgba(45,52,73,0.6)', borderColor: 'rgba(73,68,84,0.2)' }}>
-            <div className="px-3 flex items-center self-stretch pt-3.5" style={{ color: '#d0bcff' }}>
-              <Icon name="terminal" style={{ fontSize: '28px' }} />
-            </div>
+          initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.55, delay: 0.15, ease: 'easeOut' }}
+          onSubmit={handleSubmit} className="mb-10 w-full">
+          <div className="flex items-end gap-1 rounded-md border border-line-strong bg-paper-2 p-2 transition-colors focus-within:border-accent">
+            <div className="self-stretch px-3 pt-3.5 text-accent"><Icon name="search" style={{ fontSize: '22px' }} /></div>
             <AutoGrowTextarea
               value={query}
               onChange={e => setQuery(e.target.value)}
               onSubmit={handleSubmit}
               maxHeight={260}
-              className="bg-transparent border-none focus:ring-0 outline-none w-full text-lg py-4 leading-relaxed"
-              placeholder="What are we researching today?"
-              style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}
+              className="w-full border-none bg-transparent py-4 text-lg leading-relaxed outline-none focus:ring-0"
+              placeholder="Type your question…"
+              style={{ color: '#1a1613', fontFamily: "'Hanken Grotesk Variable', sans-serif" }}
               disabled={isLoading}
               submitDisabled={isLoading}
               ariaLabel="Research question"
               autoFocus
             />
-            <div className="flex items-center gap-1 pb-0.5">
+            <div className="flex items-center gap-1 pb-1">
               <AttachButton onSelect={onUpload} disabled={isLoading || !!docPending} />
+              <ReuseButton onReuse={onReuse} existingIds={new Set(documents.map(d => d.id))} disabled={isLoading || !!docPending} />
               <motion.button
                 type="submit"
                 disabled={isLoading || !query.trim()}
                 aria-label="Start research"
-                whileHover={{ scale: 1.08 }}
-                whileTap={{ scale: 0.92 }}
-                transition={{ type: 'spring', stiffness: 400, damping: 20 }}
-                className="p-3 rounded-xl shadow-lg disabled:opacity-40 disabled:cursor-not-allowed"
-                style={{ background: 'linear-gradient(135deg, #d0bcff, #a078ff)', color: '#340080' }}>
+                whileTap={{ scale: 0.9, rotate: -5 }}
+                transition={{ type: 'spring', stiffness: 400, damping: 18 }}
+                className="grid h-11 w-11 place-items-center rounded-sm bg-accent text-on-accent disabled:cursor-not-allowed disabled:opacity-40">
                 {isLoading
-                  ? <div className="w-5 h-5 border-2 border-current border-t-transparent rounded-full animate-spin" />
+                  ? <div className="h-5 w-5 animate-spin rounded-full border-2 border-current border-t-transparent" />
                   : <Icon name="send" style={{ fontVariationSettings: "'FILL' 1" }} />}
               </motion.button>
             </div>
           </div>
-          <div className="mt-3 flex justify-center">
-            <DocumentChips documents={documents} pending={docPending} error={docError} onRemove={onRemoveDoc} removingIds={removingDocIds} onView={onViewDoc} />
-          </div>
-          <p className="text-center text-[11px]" style={{ color: 'rgba(203,195,215,0.35)', fontFamily: 'Inter, sans-serif' }}>
-            Press <span style={{ color: 'rgba(208,188,255,0.6)', fontWeight: 600 }}>Enter</span> to send ·
-            {' '}<span style={{ color: 'rgba(208,188,255,0.6)', fontWeight: 600 }}>Shift + Enter</span> for a new line ·
-            {' '}attach <span style={{ color: 'rgba(208,188,255,0.6)', fontWeight: 600 }}>PDF / Word / TXT</span> for context
+          {(documents.length > 0 || docPending || docError) && (
+            <div className="mt-3 flex justify-center">
+              <DocumentChips documents={documents} pending={docPending} error={docError} onRemove={onRemoveDoc} removingIds={removingDocIds} onView={onViewDoc} />
+            </div>
+          )}
+          <p className="mt-4 text-center font-mono text-[11px] uppercase tracking-[0.14em] text-faint">
+            Enter to send · Shift+Enter for a new line · attach PDF / Word / TXT
           </p>
         </motion.form>
 
-        {/* Topic cards — staggered entrance + hover float */}
-        <div className="w-full grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Topic index cards */}
+        <div className="grid w-full grid-cols-1 gap-4 md:grid-cols-3">
           {TOPIC_CARDS.map((card, i) => (
             <motion.button
               key={card.title}
-              initial={{ opacity: 0, y: 22 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.45, delay: 0.42 + i * 0.1, ease: 'easeOut' }}
-              whileHover={{ y: -7, scale: 1.03, transition: { type: 'spring', stiffness: 340, damping: 22 } }}
-              whileTap={{ scale: 0.97 }}
+              initial={{ opacity: 0, y: 18 }} animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: 0.3 + i * 0.08, ease: 'easeOut' }}
+              whileHover={{ y: -4 }}
               onClick={() => !isLoading && onSubmit(card.query)}
               disabled={isLoading}
-              className="p-5 rounded-2xl text-left group border disabled:opacity-50"
-              style={{ backgroundColor: 'rgba(19,27,46,0.4)', borderColor: 'rgba(73,68,84,0.1)' }}
-              onMouseEnter={e => { e.currentTarget.style.borderColor = 'rgba(208,188,255,0.25)'; e.currentTarget.style.backgroundColor = 'rgba(34,42,61,0.6)' }}
-              onMouseLeave={e => { e.currentTarget.style.borderColor = 'rgba(73,68,84,0.1)'; e.currentTarget.style.backgroundColor = 'rgba(19,27,46,0.4)' }}>
-              <motion.div
-                className="w-10 h-10 rounded-full flex items-center justify-center mb-4"
-                style={{ backgroundColor: 'rgba(208,188,255,0.1)', color: '#d0bcff' }}
-                whileHover={{ scale: 1.15, transition: { type: 'spring', stiffness: 400, damping: 18 } }}>
-                <Icon name={card.icon} />
-              </motion.div>
-              <h3 className="font-bold text-sm mb-1.5" style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>{card.title}</h3>
-              <p className="text-xs leading-relaxed" style={{ color: '#cbc3d7', fontFamily: 'Inter, sans-serif' }}>{card.desc}</p>
+              className="group rounded-md border border-line bg-paper-2 p-5 text-left transition-colors hover:border-line-strong disabled:opacity-50">
+              <div className="mb-4 flex items-center justify-between">
+                <span className="grid h-9 w-9 place-items-center rounded-sm border border-line bg-paper text-accent">
+                  <Icon name={card.icon} style={{ fontSize: '18px' }} />
+                </span>
+                <span className="font-mono text-[11px] text-faint">{String(i + 1).padStart(2, '0')}</span>
+              </div>
+              <h3 className="font-serif text-base font-semibold text-ink">{card.title}</h3>
+              <p className="mt-1.5 font-sans text-xs leading-relaxed text-muted">{card.desc}</p>
             </motion.button>
           ))}
         </div>
@@ -956,23 +599,54 @@ function UserMessage({ message }) {
   const time = new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   return (
     <motion.div
-      initial={{ opacity: 0, x: 24 }} animate={{ opacity: 1, x: 0 }}
-      transition={{ duration: 0.35, ease: 'easeOut' }}
-      className="flex flex-col items-end gap-2">
-      <div className="px-5 py-4 rounded-3xl rounded-tr-none max-w-[80%] border"
-        style={{ backgroundColor: 'rgba(45,52,73,0.8)', borderColor: 'rgba(73,68,84,0.15)', color: '#dae2fd' }}>
-        <p className="text-sm leading-relaxed" style={{ fontFamily: 'Inter, sans-serif' }}>{message.content}</p>
+      initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.3, ease: 'easeOut' }}
+      className="flex flex-col items-end gap-1.5">
+      <div className="flex max-w-[80%] items-start gap-2.5 rounded-sm border border-line bg-paper-2 px-4 py-3">
+        <span className="mt-1 font-mono text-[10px] uppercase tracking-[0.14em] text-faint shrink-0">You</span>
+        <p className="font-sans text-sm leading-relaxed text-ink">{message.content}</p>
       </div>
-      <span className="text-[10px] uppercase tracking-tighter font-bold" style={{ color: 'rgba(203,195,215,0.4)', fontFamily: 'Manrope, sans-serif' }}>
-        {time}
-      </span>
+      <span className="font-mono text-[10px] uppercase tracking-[0.12em] text-faint">{time}</span>
     </motion.div>
   )
 }
 
+function friendlyError(message) {
+  const m = (message || '').toLowerCase()
+  if (m.includes('failed to fetch') || m.includes('networkerror') || m.includes('load failed') || m.includes('err_connection'))
+    return 'Could not reach the server. Check your connection and try again.'
+  if (m.includes('rate limit') || m.includes('429') || m.includes('slow down'))
+    return 'You are going a bit fast. Please wait a moment, then try again.'
+  if (m.includes('401') || m.includes('unauthor') || m.includes('expired'))
+    return 'Your session expired. Please sign in again.'
+  if (m.includes('aborted')) return 'Generation stopped.'
+  return message || 'Something went wrong. Please try again.'
+}
+
+function exportMarkdown(message) {
+  const parts = [message.content || '']
+  if (message.sources && message.sources.length) {
+    parts.push('', '## Sources')
+    message.sources.forEach((s, i) => {
+      const label = s.title || s.url || 'source'
+      parts.push(`${i + 1}. ${label}${s.url ? ' — ' + s.url : ''}`)
+    })
+  }
+  parts.push('', '_Generated by FusionAI_')
+  const blob = new Blob([parts.join('\n')], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'fusionai-answer.md'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 function AssistantMessage({ message, onSuggestion, onRegenerate, isLast, streamingStatus }) {
   const streaming = !!message.streaming
-  const hasSources = !streaming && message.sources && message.sources.length > 0
+  const sources = !streaming && message.sources ? message.sources : []
   const toolNames = streaming ? [] : [...new Set((message.tools_used || []).map(toolDisplayName))]
   const followUps = streaming ? [] : (message.followUps || [])
   const time = new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
@@ -986,111 +660,124 @@ function AssistantMessage({ message, onSuggestion, onRegenerate, isLast, streami
     } catch { /* clipboard unavailable */ }
   }
 
+  const high = !streaming && message.confidence === 'high'
+  const done = !streaming && !message.isError
+
   return (
     <motion.div
-      initial={{ opacity: 0, y: 16 }} animate={{ opacity: 1, y: 0 }}
+      initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: 'easeOut' }}
-      className="flex gap-4 items-start">
-      <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0 mt-0.5"
-        style={{ background: 'linear-gradient(135deg, #d0bcff, #a078ff)' }}>
-        <Icon name="bolt" style={{ color: '#340080', fontVariationSettings: "'FILL' 1", fontSize: '16px' }} />
-      </div>
-      <div className="flex-1 flex flex-col lg:flex-row gap-6 min-w-0">
-        <div className="flex-1 min-w-0 space-y-4">
-          {streaming && !message.content ? (
-            <div className="flex items-center gap-2 py-1">
-              <div className="w-4 h-4 border-2 rounded-full animate-spin" style={{ borderColor: '#d0bcff', borderTopColor: 'transparent' }} />
-              <span className="text-xs font-semibold" style={{ color: '#d0bcff', fontFamily: 'Manrope, sans-serif' }}>
-                {streamingStatus || 'Thinking…'}
-              </span>
-            </div>
-          ) : message.isError ? (
-            <p className="text-sm leading-relaxed" style={{ color: '#ffb4ab', fontFamily: 'Inter, sans-serif' }}>{message.content}</p>
-          ) : (
-            <div className="relative">
-              <Markdown>{message.content}</Markdown>
-              {streaming && (
-                <span className="inline-block w-1.5 h-4 ml-0.5 align-middle animate-pulse rounded-sm" style={{ backgroundColor: '#d0bcff' }} />
-              )}
-            </div>
-          )}
-          {toolNames.length > 0 && (
-            <div className="flex flex-wrap gap-2 pt-1">
-              {toolNames.map(t => (
-                <span key={t} className="text-xs px-2.5 py-0.5 rounded-full border font-medium"
-                  style={{ backgroundColor: 'rgba(208,188,255,0.08)', borderColor: 'rgba(208,188,255,0.2)', color: '#d0bcff', fontFamily: 'Manrope, sans-serif' }}>
-                  {t}
-                </span>
-              ))}
-              {message.confidence && (
-                <span className="text-xs px-2.5 py-0.5 rounded-full border font-medium"
-                  style={{ backgroundColor: 'rgba(73,68,84,0.3)', borderColor: 'rgba(73,68,84,0.3)', color: 'rgba(203,195,215,0.6)', fontFamily: 'Manrope, sans-serif' }}>
-                  {message.confidence} confidence
-                </span>
-              )}
-            </div>
-          )}
-          {!streaming && !message.isError && (
-            <div className="flex items-center gap-1">
-              <button onClick={handleCopy} aria-label="Copy answer"
-                className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-lg transition-all hover:bg-white/5"
-                style={{ color: copied ? '#86efac' : 'rgba(203,195,215,0.5)', fontFamily: 'Manrope, sans-serif' }}
-                title="Copy answer">
-                <Icon name={copied ? 'check' : 'content_copy'} style={{ fontSize: '14px' }} />
-                {copied ? 'Copied' : 'Copy'}
-              </button>
-              {isLast && onRegenerate && (
-                <button onClick={onRegenerate} aria-label="Regenerate answer"
-                  className="inline-flex items-center gap-1.5 text-[11px] font-semibold px-2.5 py-1 rounded-lg transition-all hover:bg-white/5"
-                  style={{ color: 'rgba(203,195,215,0.5)', fontFamily: 'Manrope, sans-serif' }}
-                  title="Regenerate answer">
-                  <Icon name="refresh" style={{ fontSize: '14px' }} />
-                  Regenerate
-                </button>
-              )}
-              <span className="text-[10px] ml-1" style={{ color: 'rgba(203,195,215,0.3)', fontFamily: 'Manrope, sans-serif' }}>{time}</span>
-            </div>
-          )}
-          {followUps.length > 0 && (
-            <div className="pt-1 space-y-2">
-              <span className="text-[10px] uppercase tracking-widest font-bold block"
-                style={{ color: 'rgba(203,195,215,0.4)', fontFamily: 'Manrope, sans-serif' }}>Suggested follow-ups</span>
-              <div className="flex flex-col gap-2">
-                {followUps.slice(0, 4).map((q, i) => (
-                  <button key={i} onClick={() => onSuggestion?.(q)}
-                    className="text-left text-xs px-3 py-2 rounded-xl border transition-all hover:bg-white/5 flex items-center gap-2"
-                    style={{ backgroundColor: 'rgba(19,27,46,0.5)', borderColor: 'rgba(208,188,255,0.15)', color: '#cbc3d7', fontFamily: 'Inter, sans-serif' }}>
-                    <Icon name="arrow_forward" style={{ fontSize: '14px', color: '#d0bcff', flexShrink: 0 }} />
-                    <span>{q}</span>
-                  </button>
-                ))}
-              </div>
-            </div>
+      className="relative overflow-hidden rounded-md border border-line bg-paper">
+      {done && <div className="h-[3px] w-full bg-accent" aria-hidden="true" />}
+      <div className="p-5 sm:p-6">
+        {/* receipt header */}
+        <div className="mb-4 flex items-center justify-between gap-3">
+          <span className="inline-flex items-center gap-2 text-ink">
+            <FusionMark size={17} />
+            <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-faint">Research receipt</span>
+          </span>
+          {done && message.confidence && (
+            <span title={message.confidenceReason || ''} className="cursor-help">
+              {high
+                ? <Stamp label="Verified" rotate={-6} className="!text-[10px]" />
+                : <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-muted">{message.confidence} confidence</span>}
+            </span>
           )}
         </div>
-        {hasSources && (
-          <div className="w-full lg:w-52 shrink-0 space-y-2">
-            <span className="text-[10px] uppercase tracking-widest font-bold block"
-              style={{ color: 'rgba(203,195,215,0.4)', fontFamily: 'Manrope, sans-serif' }}>Verified Sources</span>
-            <div className="flex flex-col gap-2">
-              {message.sources.slice(0, 5).map((src, i) => (
-                <a key={i} href={src.url || undefined} target={src.url ? '_blank' : undefined} rel="noopener noreferrer"
-                  className="p-3 rounded-xl flex items-center gap-2.5 transition-all border"
-                  style={{ backgroundColor: 'rgba(19,27,46,0.6)', borderColor: 'rgba(73,68,84,0.15)', textDecoration: 'none' }}
-                  onMouseEnter={e => e.currentTarget.style.backgroundColor = 'rgba(34,42,61,0.8)'}
-                  onMouseLeave={e => e.currentTarget.style.backgroundColor = 'rgba(19,27,46,0.6)'}>
-                  <div className="w-7 h-7 rounded flex items-center justify-center shrink-0" style={{ backgroundColor: '#0b1326' }}>
-                    <Icon name={sourceIcon(src.source_type)} style={{ color: '#d0bcff', fontSize: '14px' }} />
-                  </div>
-                  <div className="overflow-hidden">
-                    <p className="text-[11px] font-bold truncate" style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>{src.title}</p>
-                    {src.snippet && (
-                      <p className="text-[9px] truncate" style={{ color: 'rgba(203,195,215,0.5)', fontFamily: 'Inter, sans-serif' }}>{src.snippet.slice(0, 55)}…</p>
-                    )}
-                  </div>
-                </a>
+
+        {/* body */}
+        {streaming && !message.content ? (
+          <div className="flex items-center gap-2.5 py-1" aria-live="polite">
+            <div className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+            <span className="font-mono text-[11px] uppercase tracking-[0.12em] text-accent">{streamingStatus || 'Reading sources'}</span>
+          </div>
+        ) : message.isError ? (
+          <div>
+            <p className="font-sans text-sm leading-relaxed text-accent">{message.content}</p>
+            {onRegenerate && (
+              <button onClick={onRegenerate}
+                className="mt-3 inline-flex items-center gap-1.5 rounded-sm border border-line-strong px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.12em] text-ink transition-colors hover:border-accent hover:text-accent">
+                <Icon name="refresh" style={{ fontSize: '13px' }} />
+                Try again
+              </button>
+            )}
+          </div>
+        ) : (
+          <div className="relative" aria-live="polite">
+            <Markdown sources={sources}>{message.content}</Markdown>
+            {streaming && <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-accent align-middle" />}
+          </div>
+        )}
+
+        {/* tool tags */}
+        {toolNames.length > 0 && (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {toolNames.map(t => (
+              <span key={t} className="rounded-sm border border-line bg-paper-2 px-2 py-0.5 font-mono text-[10px] uppercase tracking-[0.1em] text-muted">{t}</span>
+            ))}
+          </div>
+        )}
+
+        {/* source tear-off stubs */}
+        {sources.length > 0 && (
+          <div className="mt-5">
+            <TearLine />
+            <p className="pb-2.5 pt-4 font-mono text-[10px] uppercase tracking-[0.16em] text-faint">Sources</p>
+            <div className="grid gap-2 sm:grid-cols-2">
+              {sources.map((src, i) => (
+                <SourceStub key={i} n={String(i + 1)} label={src.title || src.url || 'source'} href={src.url || undefined} snippet={src.snippet} />
               ))}
             </div>
+          </div>
+        )}
+
+        {/* no-sources disclosure */}
+        {done && sources.length === 0 && (
+          <p className="mt-4 font-mono text-[10px] uppercase tracking-[0.14em] text-faint">
+            General knowledge. No external sources cited.
+          </p>
+        )}
+
+        {/* follow-ups as ledger rows */}
+        {followUps.length > 0 && (
+          <div className="mt-5">
+            <TearLine />
+            <p className="pb-1 pt-4 font-mono text-[10px] uppercase tracking-[0.16em] text-faint">Next questions</p>
+            <div className="flex flex-col">
+              {followUps.slice(0, 4).map((q, i) => (
+                <button key={i} onClick={() => onSuggestion?.(q)}
+                  className="group flex items-center gap-2.5 border-b border-line py-2.5 text-left transition-colors hover:bg-paper-2/60">
+                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-accent" />
+                  <span className="font-sans text-sm text-muted group-hover:text-ink">{q}</span>
+                  <Icon name="arrow_forward" style={{ fontSize: '13px' }} className="ml-auto text-faint" />
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* actions */}
+        {done && (
+          <div className="mt-5 flex items-center gap-1">
+            <button onClick={handleCopy} aria-label="Copy answer" title="Copy answer"
+              className="inline-flex items-center gap-1.5 rounded px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] transition-colors hover:bg-paper-2"
+              style={{ color: copied ? '#4b6b53' : '#6f675b' }}>
+              <Icon name={copied ? 'check' : 'content_copy'} style={{ fontSize: '13px' }} />
+              {copied ? 'Copied' : 'Copy'}
+            </button>
+            <button onClick={() => exportMarkdown(message)} aria-label="Export answer as Markdown" title="Export as Markdown"
+              className="inline-flex items-center gap-1.5 rounded px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] text-muted transition-colors hover:bg-paper-2">
+              <Icon name="description" style={{ fontSize: '13px' }} />
+              Export
+            </button>
+            {isLast && onRegenerate && (
+              <button onClick={onRegenerate} aria-label="Regenerate answer" title="Regenerate answer"
+                className="inline-flex items-center gap-1.5 rounded px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] text-muted transition-colors hover:bg-paper-2">
+                <Icon name="refresh" style={{ fontSize: '13px' }} />
+                Redo
+              </button>
+            )}
+            <span className="ml-1 font-mono text-[10px] text-faint">{time}</span>
           </div>
         )}
       </div>
@@ -1102,12 +789,12 @@ function ThinkingIndicator({ step }) {
   return (
     <div className="flex items-center gap-4 py-2">
       <div className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
-        style={{ backgroundColor: 'rgba(45,52,73,0.6)' }}>
-        <div className="w-4 h-4 border-2 rounded-full animate-spin" style={{ borderColor: '#d0bcff', borderTopColor: 'transparent' }} />
+        style={{ backgroundColor: 'rgba(236,227,211,0.6)' }}>
+        <div className="w-4 h-4 border-2 rounded-full animate-spin" style={{ borderColor: '#c4402e', borderTopColor: 'transparent' }} />
       </div>
       <div className="flex flex-col">
-        <span className="text-xs font-semibold" style={{ color: '#d0bcff', fontFamily: 'Manrope, sans-serif' }}>{LOADING_STEPS[step]}</span>
-        <span className="text-[10px]" style={{ color: 'rgba(203,195,215,0.4)', fontFamily: 'Inter, sans-serif' }}>This may take a few seconds…</span>
+        <span className="text-xs font-semibold" style={{ color: '#c4402e', fontFamily: "'Hanken Grotesk Variable', sans-serif" }}>{LOADING_STEPS[step]}</span>
+        <span className="text-[10px]" style={{ color: 'rgba(111,103,91,0.4)', fontFamily: "'Hanken Grotesk Variable', sans-serif" }}>This may take a few seconds…</span>
       </div>
     </div>
   )
@@ -1121,9 +808,24 @@ function LibraryView({ sessions, onOpenSession, onDeleteSession, onRenameSession
   const [editTitle, setEditTitle] = useState('')
   const [deletingId, setDeletingId] = useState(null)
 
-  const filtered = sessions.filter(s =>
-    (s.title || '').toLowerCase().includes(search.toLowerCase())
-  )
+  // Full-text search (titles + the questions asked) via the backend, debounced;
+  // falls back to a client-side title filter while the request is in flight.
+  const [serverResults, setServerResults] = useState(null)
+  useEffect(() => {
+    const q = search.trim()
+    if (!q) { setServerResults(null); return }
+    let alive = true
+    const t = setTimeout(() => {
+      apiCall(`/api/search?q=${encodeURIComponent(q)}`)
+        .then(r => { if (alive) setServerResults(r) })
+        .catch(() => {})
+    }, 250)
+    return () => { alive = false; clearTimeout(t) }
+  }, [search])
+
+  const filtered = search.trim()
+    ? (serverResults ?? sessions.filter(s => (s.title || '').toLowerCase().includes(search.toLowerCase())))
+    : sessions
 
   function startEdit(session, e) {
     e.stopPropagation()
@@ -1147,96 +849,73 @@ function LibraryView({ sessions, onOpenSession, onDeleteSession, onRenameSession
   }
 
   return (
-    <div className="flex-1 overflow-y-auto px-6 py-8 md:px-10">
-      <div className="max-w-4xl mx-auto">
+    <div className="flex-1 overflow-y-auto px-6 py-10 md:px-10">
+      <div className="mx-auto max-w-4xl">
         {/* Header */}
-        <div className="flex items-center justify-between mb-8 gap-4 flex-wrap">
-          <div className="flex items-center gap-3">
-            <h2 className="text-2xl font-bold" style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>Library</h2>
-            <span className="text-xs px-2.5 py-1 rounded-full font-bold"
-              style={{ backgroundColor: 'rgba(208,188,255,0.1)', color: '#d0bcff', fontFamily: 'Manrope, sans-serif' }}>
-              {sessions.length} sessions
-            </span>
+        <div className="mb-8 flex flex-wrap items-center justify-between gap-4">
+          <div className="flex items-baseline gap-3">
+            <h2 className="font-serif text-3xl font-semibold tracking-tight text-ink">Library</h2>
+            <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-faint">{sessions.length} sessions</span>
           </div>
-          <div className="flex items-center gap-2 rounded-xl border px-3 py-2 flex-1 max-w-xs"
-            style={{ backgroundColor: 'rgba(45,52,73,0.4)', borderColor: 'rgba(73,68,84,0.2)' }}>
-            <Icon name="search" style={{ color: 'rgba(203,195,215,0.4)', fontSize: '18px' }} />
+          <div className="flex max-w-xs flex-1 items-center gap-2 rounded-sm border border-line bg-paper-2 px-3 py-2">
+            <Icon name="search" style={{ color: '#9a9082', fontSize: '17px' }} />
             <input value={search} onChange={e => setSearch(e.target.value)}
-              className="bg-transparent border-none focus:ring-0 outline-none text-sm flex-1"
-              placeholder="Search sessions…"
-              style={{ color: '#dae2fd', fontFamily: 'Inter, sans-serif' }} />
+              className="flex-1 border-none bg-transparent text-sm outline-none focus:ring-0"
+              placeholder="Search the catalog…"
+              style={{ color: '#1a1613', fontFamily: "'Hanken Grotesk Variable', sans-serif" }} />
           </div>
         </div>
 
         {/* Empty state */}
         {filtered.length === 0 && (
-          <div className="flex flex-col items-center justify-center py-20 gap-4">
-            <div className="w-16 h-16 rounded-2xl flex items-center justify-center"
-              style={{ backgroundColor: 'rgba(208,188,255,0.08)' }}>
-              <Icon name="auto_stories" style={{ color: '#d0bcff', fontSize: '32px' }} />
-            </div>
-            <p className="font-semibold" style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>
-              {search ? 'No sessions match your search' : 'No research sessions yet'}
-            </p>
-            <p className="text-sm" style={{ color: 'rgba(203,195,215,0.5)', fontFamily: 'Inter, sans-serif' }}>
-              {search ? 'Try a different search term' : 'Start a new research to build your library'}
+          <div className="flex flex-col items-center justify-center gap-5 py-24">
+            <Stamp label="No entries" tone="muted" rotate={-8} style={{ fontSize: '15px', padding: '6px 16px' }} />
+            <p className="font-sans text-sm text-muted">
+              {search ? 'No sessions match your search.' : 'Start a new research to fill the catalog.'}
             </p>
           </div>
         )}
 
-        {/* Session grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {filtered.map(session => (
+        {/* Session index cards */}
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {filtered.map((session, idx) => (
             <div key={session.id}
-              className="group p-5 rounded-2xl border transition-all cursor-pointer"
-              style={{ backgroundColor: 'rgba(19,27,46,0.5)', borderColor: 'rgba(73,68,84,0.15)' }}
-              onClick={() => !editingId && onOpenSession(session)}
-              onMouseEnter={e => e.currentTarget.style.borderColor = 'rgba(208,188,255,0.2)'}
-              onMouseLeave={e => e.currentTarget.style.borderColor = 'rgba(73,68,84,0.15)'}>
-              {/* Title */}
-              <div className="flex items-start justify-between gap-2 mb-3">
-                {editingId === session.id ? (
-                  <input value={editTitle} onChange={e => setEditTitle(e.target.value)}
-                    onBlur={() => commitEdit(session.id)}
-                    onKeyDown={e => { if (e.key === 'Enter') commitEdit(session.id); if (e.key === 'Escape') setEditingId(null) }}
-                    onClick={e => e.stopPropagation()}
-                    className="flex-1 bg-transparent border-b outline-none text-sm font-bold"
-                    style={{ color: '#dae2fd', borderColor: 'rgba(208,188,255,0.3)', fontFamily: 'Manrope, sans-serif' }}
-                    autoFocus />
-                ) : (
-                  <h3 className="font-bold text-sm flex-1 line-clamp-2 leading-snug"
-                    style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>
-                    {session.title || 'Untitled session'}
-                  </h3>
-                )}
-                {/* Actions */}
-                <div className="flex items-center gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                  <button onClick={e => startEdit(session, e)}
-                    className="w-7 h-7 rounded-lg flex items-center justify-center transition-all hover:bg-white/10"
-                    style={{ color: 'rgba(208,188,255,0.6)' }}>
-                    <Icon name="edit" style={{ fontSize: '14px' }} />
+              className="group cursor-pointer rounded-md border border-line bg-paper-2 p-5 transition-colors hover:border-line-strong"
+              onClick={() => !editingId && onOpenSession(session)}>
+              <div className="mb-3 flex items-start justify-between gap-2">
+                <span className="font-mono text-[11px] text-faint">No. {String(idx + 1).padStart(3, '0')}</span>
+                <div className="flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+                  <button onClick={e => startEdit(session, e)} aria-label="Rename session"
+                    className="grid h-7 w-7 place-items-center rounded-sm border border-line text-muted transition-colors hover:border-line-strong hover:text-ink">
+                    <Icon name="edit" style={{ fontSize: '13px' }} />
                   </button>
-                  <button onClick={e => confirmDelete(session.id, e)}
-                    disabled={processingIds.has(session.id)}
-                    className="w-7 h-7 rounded-lg flex items-center justify-center transition-all disabled:opacity-40 disabled:cursor-not-allowed"
-                    style={{ color: deletingId === session.id ? '#ffb4ab' : 'rgba(203,195,215,0.4)', backgroundColor: deletingId === session.id ? 'rgba(255,180,171,0.1)' : 'transparent' }}
+                  <button onClick={e => confirmDelete(session.id, e)} disabled={processingIds.has(session.id)}
+                    className="grid h-7 w-7 place-items-center rounded-sm border transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    style={{ borderColor: deletingId === session.id ? '#c4402e' : '#e4dac6', color: deletingId === session.id ? '#c4402e' : '#6f675b' }}
+                    aria-label="Delete session"
                     title={processingIds.has(session.id) ? 'Deleting…' : deletingId === session.id ? 'Click again to confirm' : 'Delete session'}>
-                    <Icon name={processingIds.has(session.id) ? 'hourglass_empty' : deletingId === session.id ? 'warning' : 'delete'} style={{ fontSize: '14px' }} />
+                    <Icon name={processingIds.has(session.id) ? 'hourglass_empty' : deletingId === session.id ? 'warning' : 'delete'} style={{ fontSize: '13px' }} />
                   </button>
                 </div>
               </div>
-
-              {/* Meta */}
-              <div className="flex items-center gap-3 flex-wrap">
+              {editingId === session.id ? (
+                <input value={editTitle} onChange={e => setEditTitle(e.target.value)}
+                  onBlur={() => commitEdit(session.id)}
+                  onKeyDown={e => { if (e.key === 'Enter') commitEdit(session.id); if (e.key === 'Escape') setEditingId(null) }}
+                  onClick={e => e.stopPropagation()}
+                  className="w-full border-b bg-transparent text-base font-semibold outline-none"
+                  style={{ color: '#1a1613', borderColor: '#c4402e', fontFamily: "'Newsreader Variable', serif" }}
+                  autoFocus />
+              ) : (
+                <h3 className="line-clamp-2 font-serif text-base font-semibold leading-snug text-ink">
+                  {session.title || 'Untitled session'}
+                </h3>
+              )}
+              <div className="mt-3 flex items-center gap-3 font-mono text-[11px] text-faint">
                 {session.result_count > 0 && (
-                  <span className="text-[11px] px-2 py-0.5 rounded-full font-medium"
-                    style={{ backgroundColor: 'rgba(208,188,255,0.08)', color: '#d0bcff', fontFamily: 'Manrope, sans-serif' }}>
-                    {session.result_count} {session.result_count === 1 ? 'query' : 'queries'}
-                  </span>
+                  <span className="text-accent">{session.result_count} {session.result_count === 1 ? 'query' : 'queries'}</span>
                 )}
-                <span className="text-[11px]" style={{ color: 'rgba(203,195,215,0.4)', fontFamily: 'Inter, sans-serif' }}>
-                  {formatRelativeTime(session.updated_at)}
-                </span>
+                <span>{formatRelativeTime(session.updated_at)}</span>
               </div>
             </div>
           ))}
@@ -1262,17 +941,11 @@ function InsightsView() {
 
   function StatCard({ icon, label, value, sub }) {
     return (
-      <div className="p-6 rounded-2xl border flex flex-col gap-3"
-        style={{ backgroundColor: 'rgba(19,27,46,0.5)', borderColor: 'rgba(73,68,84,0.15)' }}>
-        <div className="w-10 h-10 rounded-xl flex items-center justify-center"
-          style={{ backgroundColor: 'rgba(208,188,255,0.1)' }}>
-          <Icon name={icon} style={{ color: '#d0bcff', fontSize: '20px' }} />
-        </div>
-        <div>
-          <p className="text-3xl font-extrabold" style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>{value}</p>
-          <p className="text-sm font-medium mt-0.5" style={{ color: 'rgba(203,195,215,0.6)', fontFamily: 'Inter, sans-serif' }}>{label}</p>
-          {sub && <p className="text-xs mt-1" style={{ color: 'rgba(203,195,215,0.35)', fontFamily: 'Inter, sans-serif' }}>{sub}</p>}
-        </div>
+      <div className="rounded-md border border-line bg-paper-2 p-5">
+        <Icon name={icon} style={{ color: '#c4402e', fontSize: '18px' }} />
+        <p className="mt-3 font-serif text-4xl font-semibold leading-none text-ink">{value}</p>
+        <p className="mt-2 font-mono text-[10px] uppercase tracking-[0.14em] text-faint">{label}</p>
+        {sub && <p className="mt-1 font-mono text-[10px] text-faint">{sub}</p>}
       </div>
     )
   }
@@ -1281,8 +954,8 @@ function InsightsView() {
     return (
       <div className="flex-1 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
-          <div className="w-8 h-8 border-2 rounded-full animate-spin" style={{ borderColor: '#d0bcff', borderTopColor: 'transparent' }} />
-          <p className="text-sm" style={{ color: 'rgba(203,195,215,0.5)', fontFamily: 'Inter, sans-serif' }}>Loading insights…</p>
+          <div className="w-8 h-8 border-2 rounded-full animate-spin" style={{ borderColor: '#c4402e', borderTopColor: 'transparent' }} />
+          <p className="text-sm" style={{ color: 'rgba(111,103,91,0.5)', fontFamily: "'Hanken Grotesk Variable', sans-serif" }}>Loading insights…</p>
         </div>
       </div>
     )
@@ -1292,107 +965,84 @@ function InsightsView() {
     return (
       <div className="flex-1 flex items-center justify-center px-6">
         <div className="text-center">
-          <Icon name="error_outline" style={{ color: '#ffb4ab', fontSize: '40px' }} />
-          <p className="mt-3 font-semibold" style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>Failed to load insights</p>
-          <p className="text-sm mt-1" style={{ color: 'rgba(203,195,215,0.5)', fontFamily: 'Inter, sans-serif' }}>{error}</p>
+          <Icon name="error_outline" style={{ color: '#c4402e', fontSize: '40px' }} />
+          <p className="mt-3 font-semibold" style={{ color: '#1a1613', fontFamily: "'Hanken Grotesk Variable', sans-serif" }}>Failed to load insights</p>
+          <p className="text-sm mt-1" style={{ color: 'rgba(111,103,91,0.5)', fontFamily: "'Hanken Grotesk Variable', sans-serif" }}>{error}</p>
         </div>
       </div>
     )
   }
 
   const confTotal = Object.values(data.confidence_breakdown).reduce((a, b) => a + b, 0) || 1
-  const confColors = { high: '#86efac', medium: '#fde68a', low: '#fca5a5' }
+  const confColors = { high: '#4b6b53', medium: '#c4402e', low: 'rgba(196,64,46,0.45)' }
   const confLabels = { high: 'High', medium: 'Medium', low: 'Low' }
-
   const maxToolCount = data.top_tools[0]?.count || 1
 
-  return (
-    <div className="flex-1 overflow-y-auto px-6 py-8 md:px-10">
-      <div className="max-w-4xl mx-auto">
-        <h2 className="text-2xl font-bold mb-8" style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>Insights</h2>
+  const LedgerBar = ({ label, count, suffix, color, pct }) => (
+    <div>
+      <div className="mb-1.5 flex items-baseline justify-between">
+        <span className="font-mono text-[11px] uppercase tracking-[0.1em]" style={{ color: color || '#c4402e' }}>{label}</span>
+        <span className="font-mono text-[11px] text-faint">{count}{suffix}</span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-paper-3">
+        <div className="h-full rounded-full transition-all duration-700" style={{ width: `${pct}%`, backgroundColor: color || '#c4402e' }} />
+      </div>
+    </div>
+  )
 
-        {/* Stat cards */}
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-8">
+  return (
+    <div className="flex-1 overflow-y-auto px-6 py-10 md:px-10">
+      <div className="mx-auto max-w-4xl">
+        <h2 className="mb-8 font-serif text-3xl font-semibold tracking-tight text-ink">Insights</h2>
+
+        {/* Stat sheet */}
+        <div className="mb-8 grid grid-cols-2 gap-4 md:grid-cols-4">
           <StatCard icon="forum" label="Research sessions" value={data.total_sessions} />
           <StatCard icon="search" label="Total queries" value={data.total_queries} />
           <StatCard icon="attach_file" label="Documents uploaded" value={data.total_documents} />
           <StatCard icon="bolt" label="Cache hit rate" value={`${data.cache_hit_rate}%`} sub={`${data.avg_latency_ms}ms avg latency`} />
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Confidence breakdown */}
-          <div className="p-6 rounded-2xl border" style={{ backgroundColor: 'rgba(19,27,46,0.5)', borderColor: 'rgba(73,68,84,0.15)' }}>
-            <p className="text-sm font-bold mb-5" style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>Answer Confidence</p>
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+          {/* Confidence */}
+          <div className="rounded-md border border-line bg-paper-2 p-6">
+            <p className="mb-5 font-mono text-[10px] uppercase tracking-[0.16em] text-faint">Answer confidence</p>
             {confTotal === 1 && data.total_queries === 0 ? (
-              <p className="text-sm" style={{ color: 'rgba(203,195,215,0.4)', fontFamily: 'Inter, sans-serif' }}>No data yet</p>
+              <p className="font-sans text-sm text-faint">No data yet.</p>
             ) : (
               <div className="space-y-4">
                 {Object.entries(data.confidence_breakdown).map(([key, count]) => (
-                  <div key={key}>
-                    <div className="flex justify-between mb-1.5">
-                      <span className="text-xs font-medium" style={{ color: confColors[key] || '#d0bcff', fontFamily: 'Manrope, sans-serif' }}>{confLabels[key]}</span>
-                      <span className="text-xs" style={{ color: 'rgba(203,195,215,0.5)', fontFamily: 'Inter, sans-serif' }}>{count}</span>
-                    </div>
-                    <div className="h-2 rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(73,68,84,0.3)' }}>
-                      <div className="h-full rounded-full transition-all duration-700"
-                        style={{ width: `${(count / confTotal) * 100}%`, backgroundColor: confColors[key] || '#d0bcff' }} />
-                    </div>
-                  </div>
+                  <LedgerBar key={key} label={confLabels[key]} count={count} color={confColors[key]} pct={(count / confTotal) * 100} />
                 ))}
               </div>
             )}
           </div>
 
-          {/* Top tools */}
-          <div className="p-6 rounded-2xl border" style={{ backgroundColor: 'rgba(19,27,46,0.5)', borderColor: 'rgba(73,68,84,0.15)' }}>
-            <p className="text-sm font-bold mb-5" style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>Tools Used</p>
+          {/* Tools */}
+          <div className="rounded-md border border-line bg-paper-2 p-6">
+            <p className="mb-5 font-mono text-[10px] uppercase tracking-[0.16em] text-faint">Tools used</p>
             {data.top_tools.length === 0 ? (
-              <p className="text-sm" style={{ color: 'rgba(203,195,215,0.4)', fontFamily: 'Inter, sans-serif' }}>No data yet</p>
+              <p className="font-sans text-sm text-faint">No data yet.</p>
             ) : (
               <div className="space-y-4">
                 {data.top_tools.map(t => (
-                  <div key={t.name}>
-                    <div className="flex justify-between mb-1.5">
-                      <span className="text-xs font-medium" style={{ color: '#d0bcff', fontFamily: 'Manrope, sans-serif' }}>{toolDisplayName(t.name)}</span>
-                      <span className="text-xs" style={{ color: 'rgba(203,195,215,0.5)', fontFamily: 'Inter, sans-serif' }}>{t.count}×</span>
-                    </div>
-                    <div className="h-2 rounded-full overflow-hidden" style={{ backgroundColor: 'rgba(73,68,84,0.3)' }}>
-                      <div className="h-full rounded-full transition-all duration-700"
-                        style={{ width: `${(t.count / maxToolCount) * 100}%`, background: 'linear-gradient(to right, #d0bcff, #a078ff)' }} />
-                    </div>
-                  </div>
+                  <LedgerBar key={t.name} label={toolDisplayName(t.name)} count={t.count} suffix="×" pct={(t.count / maxToolCount) * 100} />
                 ))}
               </div>
             )}
           </div>
 
-          {/* Recent activity */}
+          {/* Recent activity — ledger rows */}
           {data.recent_activity.length > 0 && (
-            <div className="md:col-span-2 p-6 rounded-2xl border" style={{ backgroundColor: 'rgba(19,27,46,0.5)', borderColor: 'rgba(73,68,84,0.15)' }}>
-              <p className="text-sm font-bold mb-5" style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>Recent Activity</p>
-              <div className="flex flex-col gap-3">
+            <div className="rounded-md border border-line bg-paper-2 p-6 md:col-span-2">
+              <p className="mb-3 font-mono text-[10px] uppercase tracking-[0.16em] text-faint">Recent activity</p>
+              <div>
                 {data.recent_activity.map((item, i) => (
-                  <div key={i} className="flex items-center justify-between py-2 border-b"
-                    style={{ borderColor: 'rgba(73,68,84,0.1)' }}>
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-7 h-7 rounded-lg flex items-center justify-center shrink-0"
-                        style={{ backgroundColor: 'rgba(208,188,255,0.1)' }}>
-                        <Icon name="chat_bubble" style={{ color: '#d0bcff', fontSize: '14px' }} />
-                      </div>
-                      <span className="text-sm truncate" style={{ color: '#dae2fd', fontFamily: 'Inter, sans-serif' }}>
-                        {item.title}
-                      </span>
-                    </div>
-                    <div className="flex items-center gap-3 shrink-0 ml-4">
-                      <span className="text-xs px-2 py-0.5 rounded-full"
-                        style={{ backgroundColor: 'rgba(208,188,255,0.08)', color: '#d0bcff', fontFamily: 'Manrope, sans-serif' }}>
-                        {item.query_count} {item.query_count === 1 ? 'query' : 'queries'}
-                      </span>
-                      <span className="text-xs" style={{ color: 'rgba(203,195,215,0.4)', fontFamily: 'Inter, sans-serif' }}>
-                        {formatRelativeTime(item.updated_at)}
-                      </span>
-                    </div>
-                  </div>
+                  <LedgerRow key={i} index={String(i + 1).padStart(2, '0')}>
+                    <span className="min-w-0 flex-1 truncate font-sans text-sm text-ink">{item.title}</span>
+                    <span className="shrink-0 font-mono text-[11px] text-accent">{item.query_count} {item.query_count === 1 ? 'query' : 'queries'}</span>
+                    <span className="shrink-0 font-mono text-[11px] text-faint">{formatRelativeTime(item.updated_at)}</span>
+                  </LedgerRow>
                 ))}
               </div>
             </div>
@@ -1415,53 +1065,44 @@ function SettingsView() {
       .catch(() => setLoading(false))
   }, [])
 
-  function SettingRow({ label, value, valueColor }) {
+  function SettingRow({ label, value }) {
     return (
-      <div className="flex items-center justify-between py-3.5 border-b"
-        style={{ borderColor: 'rgba(73,68,84,0.1)' }}>
-        <span className="text-sm" style={{ color: 'rgba(203,195,215,0.6)', fontFamily: 'Inter, sans-serif' }}>{label}</span>
-        <span className="text-sm font-semibold" style={{ color: valueColor || '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>{value}</span>
+      <div className="flex items-center justify-between border-b border-line py-3.5 last:border-b-0">
+        <span className="font-sans text-sm text-muted">{label}</span>
+        <span className="font-mono text-[13px] text-ink">{value}</span>
       </div>
     )
   }
 
   function Section({ title, children }) {
     return (
-      <div className="p-6 rounded-2xl border mb-4" style={{ backgroundColor: 'rgba(19,27,46,0.5)', borderColor: 'rgba(73,68,84,0.15)' }}>
-        <p className="text-xs font-bold uppercase tracking-widest mb-4" style={{ color: 'rgba(208,188,255,0.5)', fontFamily: 'Manrope, sans-serif' }}>{title}</p>
-        {children}
+      <div className="mb-8">
+        <p className="mb-3 font-mono text-[10px] uppercase tracking-[0.16em] text-faint">{title}</p>
+        <div className="rounded-md border border-line bg-paper-2 px-5">{children}</div>
       </div>
     )
-  }
-
-  function formatUptime(secs) {
-    if (!secs) return '—'
-    const h = Math.floor(secs / 3600)
-    const m = Math.floor((secs % 3600) / 60)
-    return h > 0 ? `${h}h ${m}m` : `${m}m`
   }
 
   const isOnline = !loading && !!health && health.database_connected
 
   return (
-    <div className="flex-1 overflow-y-auto px-6 py-8 md:px-10">
-      <div className="max-w-2xl mx-auto">
-        <h2 className="text-2xl font-bold mb-8" style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>Settings</h2>
+    <div className="flex-1 overflow-y-auto px-6 py-10 md:px-10">
+      <div className="mx-auto max-w-2xl">
+        <h2 className="mb-8 font-serif text-3xl font-semibold tracking-tight text-ink">Settings</h2>
 
-        <Section title="Service Status">
-          <div className="flex items-center justify-between py-3.5">
-            <span className="text-sm" style={{ color: 'rgba(203,195,215,0.6)', fontFamily: 'Inter, sans-serif' }}>FusionAI Research</span>
-            <span className="flex items-center gap-2 text-sm font-semibold" style={{ color: isOnline ? '#86efac' : '#fca5a5', fontFamily: 'Manrope, sans-serif' }}>
-              <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: isOnline ? '#86efac' : '#fca5a5', display: 'inline-block' }} />
-              {loading ? 'Checking…' : isOnline ? 'Online' : 'Offline'}
-            </span>
+        <Section title="Service status">
+          <div className="flex items-center justify-between py-4">
+            <span className="font-sans text-sm text-muted">FusionAI Research</span>
+            {loading
+              ? <span className="font-mono text-[11px] uppercase tracking-[0.14em] text-faint">Checking…</span>
+              : <Stamp label={isOnline ? 'Live' : 'Down'} rotate={-4} className="!text-[10px]" style={isOnline ? undefined : { color: '#6f675b', borderColor: '#6f675b' }} />}
           </div>
         </Section>
 
         <Section title="About">
           <SettingRow label="App" value="FusionAI Research" />
           <SettingRow label="Version" value={health ? `v${health.version}` : 'v2.1.0'} />
-          <SettingRow label="AI Model" value="GPT-4o mini" />
+          <SettingRow label="AI model" value="GPT-4o mini" />
           <SettingRow label="Built with" value="React · FastAPI · LangChain" />
         </Section>
       </div>
@@ -1469,9 +1110,89 @@ function SettingsView() {
   )
 }
 
+// ─── Auth screen + gate ───────────────────────────────────────────────────────
+
+function AuthScreen({ onAuthed }) {
+  const navigate = useNavigate()
+  const [mode, setMode] = useState('login')
+  const [username, setUsername] = useState('')
+  const [password, setPassword] = useState('')
+  const [error, setError] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  async function submit(e) {
+    e.preventDefault()
+    setError(''); setBusy(true)
+    try {
+      const data = await authRequest(`/auth/${mode}`, { username: username.trim(), password })
+      setAuth(data.token, data.username)
+      onAuthed(data.token, data.username)
+    } catch (err) {
+      setError(err.message)
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="relative min-h-[100dvh] bg-paper text-ink antialiased">
+      <div className="grain" aria-hidden="true" />
+      <div className="relative z-[2] flex min-h-[100dvh] items-center justify-center px-5">
+        <div className="w-full max-w-sm">
+          <button onClick={() => navigate('/')} className="mb-8 inline-flex items-center gap-2.5" aria-label="FusionAI home">
+            <FusionMark size={26} />
+            <span className="font-serif text-xl font-semibold tracking-tight text-ink">FusionAI</span>
+          </button>
+          <div className="rounded-md border border-line bg-paper-2 p-6">
+            <h1 className="font-serif text-2xl font-semibold tracking-tight text-ink">
+              {mode === 'login' ? 'Welcome back' : 'Create your account'}
+            </h1>
+            <p className="mt-1.5 font-sans text-sm text-muted">
+              {mode === 'login' ? 'Sign in to pick up your research.' : 'Start keeping the receipts.'}
+            </p>
+            <form onSubmit={submit} className="mt-6 space-y-3">
+              <div>
+                <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-[0.14em] text-faint">Username</label>
+                <input value={username} onChange={e => setUsername(e.target.value)} autoFocus autoComplete="username"
+                  className="w-full rounded-sm border border-line-strong bg-paper px-3 py-2.5 text-sm text-ink outline-none focus:border-accent"
+                  placeholder="jane.researcher" />
+              </div>
+              <div>
+                <label className="mb-1.5 block font-mono text-[10px] uppercase tracking-[0.14em] text-faint">Password</label>
+                <input type="password" value={password} onChange={e => setPassword(e.target.value)}
+                  autoComplete={mode === 'login' ? 'current-password' : 'new-password'}
+                  className="w-full rounded-sm border border-line-strong bg-paper px-3 py-2.5 text-sm text-ink outline-none focus:border-accent"
+                  placeholder={mode === 'login' ? 'Your password' : 'At least 8 characters'} />
+              </div>
+              {error && <p className="font-sans text-sm text-accent">{error}</p>}
+              <button type="submit" disabled={busy || !username.trim() || !password}
+                className="w-full rounded-md bg-accent px-4 py-2.5 font-sans text-sm font-semibold text-on-accent transition-transform hover:-translate-y-px active:scale-[0.99] disabled:cursor-not-allowed disabled:opacity-40">
+                {busy ? 'Please wait…' : mode === 'login' ? 'Sign in' : 'Create account'}
+              </button>
+            </form>
+          </div>
+          <p className="mt-5 text-center font-sans text-sm text-muted">
+            {mode === 'login' ? 'No account yet? ' : 'Already have one? '}
+            <button onClick={() => { setMode(mode === 'login' ? 'register' : 'login'); setError('') }}
+              className="font-semibold text-accent hover:underline">
+              {mode === 'login' ? 'Create one' : 'Sign in'}
+            </button>
+          </p>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function ResearchAppGate() {
+  const [authed, setAuthed] = useState(!AUTH_ENABLED || !!getToken())
+  if (AUTH_ENABLED && !authed) return <AuthScreen onAuthed={() => setAuthed(true)} />
+  return <ResearchApp onLogout={() => { setAuth(null); setAuthed(false) }} />
+}
+
 // ─── Research App ─────────────────────────────────────────────────────────────
 
-function ResearchApp() {
+function ResearchApp({ onLogout }) {
   const navigate = useNavigate()
   const [view, setView] = useState('new')       // 'new' | 'chat' | 'library' | 'insights' | 'settings'
   const [activeNav, setActiveNav] = useState('new')
@@ -1492,10 +1213,23 @@ function ResearchApp() {
   const chatScrollRef = useRef(null)
   const followUpRef = useRef(null)
   const abortRef = useRef(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const bootSessionRef = useRef(searchParams.get('s'))
 
   useEffect(() => {
     apiCall('/api/sessions').then(setSessions).catch(() => {})
   }, [])
+
+  // Restore a session from the URL on load, so refresh / back keeps the thread.
+  useEffect(() => {
+    if (bootSessionRef.current) handleOpenSession({ id: bootSessionRef.current })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  // Keep the current session id in the URL as it changes.
+  useEffect(() => {
+    if (sessionId) setSearchParams({ s: sessionId }, { replace: true })
+  }, [sessionId, setSearchParams])
 
   // Keep pinned to the newest message only while the user is already at the bottom,
   // so streaming tokens don't yank the view if they've scrolled up to read.
@@ -1522,6 +1256,7 @@ function ResearchApp() {
     setActiveNav(navId)
     if (navId === 'new') {
       setView('new'); setSessionId(null); setMessages([]); setDocuments([]); setDocError(null)
+      setSearchParams({}, { replace: true })
     } else {
       setView(navId)
     }
@@ -1567,6 +1302,19 @@ function ResearchApp() {
     }
   }
 
+  // Reuse a document uploaded in another session by copying it into this one.
+  async function handleReuseDocument(docId) {
+    setDocError(null)
+    try {
+      const id = await ensureSession()
+      const doc = await apiCall(`/api/sessions/${id}/documents/${docId}/reuse`, { method: 'POST' })
+      setDocuments(prev => [...prev, doc])
+      refreshSessions()
+    } catch (err) {
+      setDocError(err.message)
+    }
+  }
+
   // Unified streaming runner — powers the initial search, follow-ups,
   // suggested questions, and regenerate.
   async function runQuery(query, { skipUserMessage = false } = {}) {
@@ -1599,10 +1347,14 @@ function ResearchApp() {
               sources: ev.citations || [],
               tools_used: ev.tools_used || [],
               confidence: ev.confidence,
+              confidenceReason: ev.confidence_reason,
               followUps: ev.follow_up_questions || [],
             }))
             refreshSessions()
-            setTimeout(() => followUpRef.current?.focus(), 60)
+            // Avoid yanking the viewport / popping the keyboard on touch devices.
+            if (!window.matchMedia('(pointer: coarse)').matches) {
+              setTimeout(() => followUpRef.current?.focus(), 60)
+            }
           } else if (ev.type === 'error') {
             throw new Error(ev.message)
           }
@@ -1612,7 +1364,7 @@ function ResearchApp() {
       if (err.name === 'AbortError') {
         patch(m => ({ streaming: false, stopped: true, content: m.content || '_Generation stopped._' }))
       } else {
-        patch(() => ({ streaming: false, isError: true, content: `Something went wrong: ${err.message}` }))
+        patch(() => ({ streaming: false, isError: true, content: friendlyError(err.message) }))
       }
     } finally {
       setIsLoading(false)
@@ -1688,7 +1440,7 @@ function ResearchApp() {
     setSessions(prev => prev.map(s => s.id === id ? { ...s, title: updated.title } : s))
   }
 
-  const S = { backgroundColor: '#0b1326', color: '#dae2fd' }
+  const S = { backgroundColor: '#fbf8f2', color: '#1a1613' }
 
   return (
     <div className="flex overflow-hidden" style={{ height: '100dvh', ...S }}>
@@ -1701,31 +1453,32 @@ function ResearchApp() {
 
       <main className="md:ml-72 flex flex-col overflow-hidden relative" style={{ flex: 1, height: '100dvh', ...S }}>
         {/* Top bar */}
-        <header className="flex justify-between items-center px-6 h-16 shrink-0 sticky top-0 z-50 border-b"
-          style={{ backgroundColor: 'rgba(11,19,38,0.7)', backdropFilter: 'blur(20px)', borderColor: 'rgba(73,68,84,0.1)', boxShadow: '0 8px 16px rgba(109,59,215,0.06)' }}>
+        <header className="sticky top-0 z-50 flex h-14 shrink-0 items-center justify-between border-b border-line bg-paper px-5">
           <div className="flex items-center gap-3">
-            <button onClick={() => navigate('/')} className="text-xl font-bold tracking-tighter"
-              style={{ background: 'linear-gradient(to right, #d0bcff, #a078ff)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', fontFamily: 'Manrope, sans-serif' }}>
-              FusionAI
+            <button onClick={() => navigate('/')} className="inline-flex items-center gap-2" aria-label="FusionAI home">
+              <FusionMark size={20} />
+              <span className="font-serif text-lg font-semibold tracking-tight text-ink">FusionAI</span>
             </button>
             {view === 'chat' && (
-              <span className="hidden md:block text-xs" style={{ color: 'rgba(203,195,215,0.4)', fontFamily: 'Inter, sans-serif' }}>
-                / Research Assistant
-              </span>
+              <span className="hidden font-mono text-[10px] uppercase tracking-[0.16em] text-faint md:block">/ research</span>
             )}
           </div>
           <div className="flex items-center gap-2">
             {view === 'chat' && (
               <button onClick={() => handleNavChange('new')}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-semibold transition-all border hover:bg-white/5"
-                style={{ color: '#d0bcff', borderColor: 'rgba(208,188,255,0.2)', fontFamily: 'Manrope, sans-serif' }}>
-                <Icon name="add_circle" style={{ fontSize: '16px' }} />
+                className="inline-flex items-center gap-1.5 rounded-sm border border-line-strong px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-ink transition-colors hover:border-accent hover:text-accent">
+                <Icon name="add_circle" style={{ fontSize: '15px' }} />
                 New
               </button>
             )}
-            <button onClick={() => navigate('/')} className="w-9 h-9 flex items-center justify-center rounded-full transition-all hover:bg-white/5"
-              style={{ color: 'rgba(218,226,253,0.4)' }} title="Back to landing page">
-              <Icon name="home" />
+            {AUTH_ENABLED && onLogout && (
+              <button onClick={onLogout} aria-label="Sign out" title={getUser() ? `Sign out (${getUser()})` : 'Sign out'}
+                className="inline-flex items-center rounded-sm border border-line-strong px-3 py-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-muted transition-colors hover:border-accent hover:text-accent">
+                Sign out
+              </button>
+            )}
+            <button onClick={() => navigate('/')} className="grid h-9 w-9 place-items-center rounded-sm text-muted transition-colors hover:bg-paper-2 hover:text-ink" title="Back to landing page" aria-label="Back to landing page">
+              <Icon name="home" style={{ fontSize: '18px' }} />
             </button>
           </div>
         </header>
@@ -1737,6 +1490,7 @@ function ResearchApp() {
             isLoading={isLoading}
             documents={documents}
             onUpload={handleUploadDocument}
+            onReuse={handleReuseDocument}
             onRemoveDoc={handleRemoveDocument}
             onViewDoc={handleViewDocument}
             docPending={docPending}
@@ -1761,19 +1515,8 @@ function ResearchApp() {
 
         {view === 'chat' && (
           <>
-            <section ref={chatScrollRef} onScroll={handleChatScroll} className="flex-1 overflow-y-auto px-6 py-8 md:px-12 space-y-10 relative">
-              {/* Subtle ambient background */}
-              <div className="absolute inset-0 pointer-events-none overflow-hidden">
-                <motion.div className="absolute top-1/4 right-1/4 w-[500px] h-[500px] rounded-full blur-[140px]"
-                  style={{ backgroundColor: 'rgba(160,120,255,0.04)' }}
-                  animate={{ x: [0, 30, -15, 0], y: [0, -20, 25, 0] }}
-                  transition={{ duration: 18, repeat: Infinity, ease: 'easeInOut' }} />
-                <motion.div className="absolute bottom-1/3 left-1/5 w-[350px] h-[350px] rounded-full blur-[120px]"
-                  style={{ backgroundColor: 'rgba(208,188,255,0.03)' }}
-                  animate={{ x: [0, -20, 10, 0], y: [0, 15, -20, 0] }}
-                  transition={{ duration: 14, repeat: Infinity, ease: 'easeInOut', delay: 2 }} />
-              </div>
-              <div className="w-full space-y-10 relative z-10">
+            <section ref={chatScrollRef} onScroll={handleChatScroll} className="relative flex-1 overflow-y-auto px-6 py-8 md:px-12">
+              <div className="mx-auto w-full max-w-3xl space-y-8">
                 <AnimatePresence>
                   {messages.map((msg, i) =>
                     msg.role === 'user'
@@ -1799,62 +1542,59 @@ function ResearchApp() {
                   initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 8 }}
                   onClick={scrollToBottom}
                   aria-label="Scroll to latest"
-                  className="absolute left-1/2 -translate-x-1/2 bottom-40 z-20 w-10 h-10 rounded-full flex items-center justify-center border shadow-xl"
-                  style={{ backgroundColor: 'rgba(45,52,73,0.95)', borderColor: 'rgba(208,188,255,0.25)', color: '#d0bcff' }}>
-                  <Icon name="arrow_downward" />
+                  className="absolute bottom-40 left-1/2 z-20 grid h-9 w-9 -translate-x-1/2 place-items-center rounded-sm border border-line-strong bg-paper text-accent shadow-lift transition-colors hover:border-accent">
+                  <Icon name="arrow_downward" style={{ fontSize: '18px' }} />
                 </motion.button>
               )}
             </AnimatePresence>
 
-            {/* Floating follow-up input — extra bottom padding on mobile clears the bottom nav */}
-            <div className="absolute bottom-0 left-0 right-0 p-4 pb-24 md:p-6 pointer-events-none"
-              style={{ background: 'linear-gradient(to top, rgba(11,19,38,1) 55%, transparent)' }}>
-              <div className="w-full pointer-events-auto px-6 md:px-12">
-                <div className="relative rounded-3xl p-2 border"
-                  style={{ background: 'rgba(45,52,73,0.7)', backdropFilter: 'blur(20px)', borderColor: 'rgba(73,68,84,0.25)', boxShadow: '0 24px 48px rgba(0,0,0,0.4)' }}>
+            {/* Floating follow-up composer (receipt slip) */}
+            <div className="pointer-events-none absolute inset-x-0 bottom-0 p-4 pb-24 md:p-6"
+              style={{ background: 'linear-gradient(to top, #fbf8f2 62%, transparent)' }}>
+              <div className="pointer-events-auto mx-auto w-full max-w-3xl">
+                <div className="relative rounded-md border border-line-strong bg-paper-2 p-2 shadow-lift">
                   {isLoading && (
-                    <div className="absolute -top-10 left-1/2 -translate-x-1/2 px-4 py-1.5 rounded-full flex items-center gap-2 border shadow-xl whitespace-nowrap"
-                      style={{ backgroundColor: 'rgba(45,52,73,0.95)', borderColor: 'rgba(73,68,84,0.2)' }}>
-                      <span className="w-1.5 h-1.5 rounded-full animate-pulse" style={{ backgroundColor: '#d0bcff' }} />
-                      <span className="text-[10px] font-bold uppercase tracking-widest" style={{ color: '#dae2fd', fontFamily: 'Manrope, sans-serif' }}>
-                        {statusMsg || 'Generating…'}
-                      </span>
+                    <div className="absolute -top-9 left-1/2 inline-flex -translate-x-1/2 items-center gap-2 whitespace-nowrap rounded-sm border border-line bg-paper px-3 py-1">
+                      <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-accent" />
+                      <span className="font-mono text-[10px] uppercase tracking-[0.14em] text-ink">{statusMsg || 'Generating'}</span>
                     </div>
                   )}
-                  <div className="px-2 pt-2">
-                    <DocumentChips documents={documents} pending={docPending} error={docError} onRemove={handleRemoveDocument} removingIds={removingDocIds} onView={handleViewDocument} />
-                  </div>
-                  <form onSubmit={handleFollowUp} className="flex items-end gap-2 p-1">
+                  {(documents.length > 0 || docPending || docError) && (
+                    <div className="px-1 pt-1">
+                      <DocumentChips documents={documents} pending={docPending} error={docError} onRemove={handleRemoveDocument} removingIds={removingDocIds} onView={handleViewDocument} />
+                    </div>
+                  )}
+                  <form onSubmit={handleFollowUp} className="flex items-end gap-1.5 p-1">
                     <AttachButton onSelect={handleUploadDocument} disabled={isLoading || !!docPending} />
+                    <ReuseButton onReuse={handleReuseDocument} existingIds={new Set(documents.map(d => d.id))} disabled={isLoading || !!docPending} />
                     <AutoGrowTextarea
                       value={followUp}
                       onChange={e => setFollowUp(e.target.value)}
                       onSubmit={handleFollowUp}
                       maxHeight={200}
-                      className="flex-1 bg-transparent border-none focus:ring-0 outline-none px-3 py-3 text-sm leading-relaxed"
-                      placeholder={isLoading ? 'Type your next question…' : 'Ask a follow up question…'}
-                      style={{ color: '#dae2fd', fontFamily: 'Inter, sans-serif' }}
+                      className="flex-1 border-none bg-transparent px-2 py-3 text-sm leading-relaxed outline-none focus:ring-0"
+                      placeholder={isLoading ? 'Type your next question…' : 'Ask a follow-up…'}
+                      style={{ color: '#1a1613', fontFamily: "'Hanken Grotesk Variable', sans-serif" }}
                       inputRef={followUpRef}
                       ariaLabel="Ask a follow up question"
                       submitDisabled={isLoading}
                     />
                     {isLoading ? (
                       <button type="button" onClick={handleStop} aria-label="Stop generating"
-                        className="h-12 w-12 rounded-2xl flex items-center justify-center shadow-lg transition-all hover:scale-105 active:scale-95 shrink-0 border"
-                        style={{ backgroundColor: 'rgba(45,52,73,0.9)', borderColor: 'rgba(208,188,255,0.3)', color: '#d0bcff' }}>
+                        className="grid h-11 w-11 shrink-0 place-items-center rounded-sm border border-line-strong bg-paper text-accent transition-colors hover:border-accent">
                         <Icon name="stop" style={{ fontVariationSettings: "'FILL' 1" }} />
                       </button>
                     ) : (
-                      <button type="submit" disabled={!followUp.trim()} aria-label="Send message"
-                        className="h-12 w-12 rounded-2xl flex items-center justify-center shadow-lg transition-all hover:scale-105 active:scale-95 disabled:opacity-40 disabled:cursor-not-allowed shrink-0"
-                        style={{ background: 'linear-gradient(135deg, #d0bcff, #a078ff)', color: '#340080' }}>
+                      <motion.button type="submit" disabled={!followUp.trim()} aria-label="Send message"
+                        whileTap={{ scale: 0.9, rotate: -5 }} transition={{ type: 'spring', stiffness: 400, damping: 18 }}
+                        className="grid h-11 w-11 shrink-0 place-items-center rounded-sm bg-accent text-on-accent disabled:cursor-not-allowed disabled:opacity-40">
                         <Icon name="send" style={{ fontVariationSettings: "'FILL' 1" }} />
-                      </button>
+                      </motion.button>
                     )}
                   </form>
                 </div>
-                <p className="text-center text-[10px] mt-3" style={{ color: 'rgba(203,195,215,0.3)', fontFamily: 'Inter, sans-serif' }}>
-                  FusionAI may produce inaccurate information. Verify critical data.
+                <p className="mt-2.5 text-center font-mono text-[10px] uppercase tracking-[0.12em] text-faint">
+                  FusionAI can be wrong. Every claim links to a source you can check.
                 </p>
               </div>
             </div>
@@ -1864,7 +1604,7 @@ function ResearchApp() {
 
       {/* Mobile bottom nav */}
       <nav className="md:hidden fixed bottom-0 left-0 right-0 h-16 border-t flex items-center justify-around px-6 z-50"
-        style={{ backgroundColor: 'rgba(11,19,38,0.9)', backdropFilter: 'blur(20px)', borderColor: 'rgba(73,68,84,0.15)' }}>
+        style={{ backgroundColor: 'rgba(251,248,242,0.9)', backdropFilter: 'blur(20px)', borderColor: 'rgba(213,200,174,0.15)' }}>
         {[
           { id: 'new', icon: 'add_circle', label: 'New' },
           { id: 'library', icon: 'auto_stories', label: 'Library' },
@@ -1873,7 +1613,7 @@ function ResearchApp() {
         ].map(item => (
           <button key={item.id} onClick={() => handleNavChange(item.id)}
             className="flex flex-col items-center gap-1"
-            style={{ color: activeNav === item.id ? '#d0bcff' : 'rgba(218,226,253,0.35)', fontFamily: 'Manrope, sans-serif' }}>
+            style={{ color: activeNav === item.id ? '#c4402e' : 'rgba(26,22,19,0.35)', fontFamily: "'Hanken Grotesk Variable', sans-serif" }}>
             <Icon name={item.icon} style={activeNav === item.id ? { fontVariationSettings: "'FILL' 1" } : {}} />
             <span className="text-[10px] font-bold">{item.label}</span>
           </button>
@@ -1895,7 +1635,7 @@ export default function App() {
     <ErrorBoundary>
       <Routes>
         <Route path="/" element={<LandingPage />} />
-        <Route path="/research" element={<ResearchApp />} />
+        <Route path="/research" element={<ResearchAppGate />} />
       </Routes>
     </ErrorBoundary>
   )
