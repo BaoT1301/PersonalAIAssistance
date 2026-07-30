@@ -143,15 +143,42 @@
   border-radius: var(--radius-md); padding: 1rem 1.1rem; overflow-x: auto; margin: 0 0 0.9rem;
 }
 .fusion-md pre code { background: transparent; border: 0; color: var(--color-ink); padding: 0; font-size: 0.82rem; line-height: 1.6; }
+/* Blockquotes render as callouts — the synthesis prompt uses them to flag where
+   sources disagree ("⚠️ Sources disagree: …"), so they should read as a notice. */
 .fusion-md blockquote {
-  border-left: 2px solid var(--color-accent); margin: 0 0 0.9rem;
-  padding: 0.15rem 0 0.15rem 1rem; color: var(--color-muted);
-  font-family: var(--font-serif); font-style: italic; font-size: 1.05rem;
+  border-left: 3px solid var(--color-accent); margin: 0 0 0.9rem;
+  padding: 0.6rem 0.9rem; color: var(--color-ink);
+  background: rgba(196, 64, 46, 0.05); border-radius: 0 4px 4px 0;
+  font-family: var(--font-sans); font-size: 0.9rem; line-height: 1.6;
 }
+.fusion-md blockquote p { margin: 0; }
 .fusion-md table { width: 100%; border-collapse: collapse; margin: 0 0 0.9rem; font-size: 0.85rem; }
 .fusion-md th, .fusion-md td { border: 1px solid var(--color-line); padding: 0.5rem 0.75rem; text-align: left; }
 .fusion-md th { color: var(--color-ink); background: var(--color-paper-2); font-weight: 600; }
 .fusion-md hr { border: 0; border-top: 1px solid var(--color-line); margin: 1.2rem 0; }
+
+/* Unverified-claim lens: blocks with no citation, shown when "Verify" is toggled. */
+.fusion-md .fusion-unverified {
+  position: relative; border-left: 2px dashed var(--color-faint);
+  padding-left: 0.65rem; background: rgba(154, 144, 130, 0.06);
+}
+.fusion-md .fusion-unverified::after {
+  content: 'no source'; margin-left: 0.4rem; padding: 0.05rem 0.3rem;
+  border: 1px solid var(--color-faint); border-radius: 3px; vertical-align: middle;
+  font-family: var(--font-mono); font-size: 0.6rem; letter-spacing: 0.08em;
+  text-transform: uppercase; color: var(--color-faint); white-space: nowrap;
+}
+
+/* Print / Save-as-PDF: show only the chosen receipt (answer + references). */
+@media print {
+  body * { visibility: hidden; }
+  .print-target, .print-target * { visibility: visible; }
+  .print-target {
+    position: absolute; left: 0; top: 0; width: 100%;
+    border: 0 !important; box-shadow: none !important;
+  }
+  .no-print, .no-print * { visibility: hidden !important; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {

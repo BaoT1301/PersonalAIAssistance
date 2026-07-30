@@ -92,20 +92,150 @@ function AutoGrowTextarea({
   )
 }
 
-// ─── Markdown renderer ──────────────────────────────────────────────────────
-// Renders assistant answers as rich Markdown. Links open safely in a new tab;
-// styling lives in the .fusion-md block in index.css.
+// ─── Markdown renderer + quote-level grounding ──────────────────────────────
+// Renders assistant answers as rich Markdown. Inline [n] markers become clickable
+// citations that open a popover showing the exact source passage — with the single
+// sentence that best supports the claim highlighted. Styling lives in .fusion-md.
 
-function CitationRef({ n, source }) {
-  const label = source ? (source.title || source.url || `Source ${n}`) : `Source ${n}`
-  const chip = <sup className="ml-px font-mono text-[0.72em] font-semibold text-accent">[{n}]</sup>
-  return source?.url
-    ? <a href={source.url} target="_blank" rel="noopener noreferrer" title={label} className="no-underline hover:opacity-70">{chip}</a>
-    : <span title={label} className="cursor-help">{chip}</span>
+const STOPWORDS = new Set(
+  'the a an and or but of to in on for with is are was were be been being by as at from that this these those it its into than then so such not no do does did has have had will would can could may might your you our we they he she'.split(' ')
+)
+
+function tokenize(text) {
+  return ((text || '').toLowerCase().match(/[a-z0-9]+/g) || []).filter(w => w.length > 2 && !STOPWORDS.has(w))
 }
 
-function Markdown({ children, sources = [] }) {
+function splitSentences(text) {
+  return ((text || '').replace(/\s+/g, ' ').match(/[^.!?]+[.!?]*/g) || []).map(s => s.trim()).filter(Boolean)
+}
+
+// Pick the sentence in `passage` that best lexically overlaps the `claim`.
+function bestSentence(passage, claim) {
+  const sentences = splitSentences(passage)
+  if (sentences.length <= 1 || !claim) return null
+  const claimTokens = new Set(tokenize(claim))
+  if (!claimTokens.size) return null
+  let best = null, bestScore = 0
+  for (const s of sentences) {
+    const toks = tokenize(s)
+    if (!toks.length) continue
+    let overlap = 0
+    for (const t of toks) if (claimTokens.has(t)) overlap += 1
+    const score = overlap / Math.sqrt(toks.length)
+    if (score > bestScore) { bestScore = score; best = s }
+  }
+  return bestScore >= 1 ? best : null // require a meaningful overlap before highlighting
+}
+
+function HighlightedPassage({ passage, quote }) {
+  const text = (passage || '').replace(/\s+/g, ' ').trim()
+  if (!quote) return <>{text}</>
+  const i = text.toLowerCase().indexOf(quote.toLowerCase())
+  if (i < 0) return <>{text}</>
+  return (
+    <>
+      {text.slice(0, i)}
+      <mark className="rounded-sm px-0.5" style={{ backgroundColor: 'rgba(196,64,46,0.16)', color: '#1a1613' }}>
+        {text.slice(i, i + quote.length)}
+      </mark>
+      {text.slice(i + quote.length)}
+    </>
+  )
+}
+
+// Map each citation number to the sentence it appears in (first occurrence),
+// so the popover can highlight the passage line that backs that specific claim.
+function buildClaims(text, count) {
+  const claims = {}
+  for (const sentence of splitSentences(text)) {
+    for (const m of sentence.matchAll(/\[(\d{1,2})\]/g)) {
+      const num = Number(m[1])
+      if (num >= 1 && num <= count && !claims[num]) {
+        claims[num] = sentence.replace(/\[\d{1,2}\]/g, '').trim()
+      }
+    }
+  }
+  return claims
+}
+
+const SOURCE_TYPE_LABEL = { wikipedia: 'Wikipedia', web: 'Web', document: 'Your file', pdf: 'Your file', docx: 'Your file', system: 'System' }
+
+function CitationRef({ n, source, claim }) {
+  const [open, setOpen] = useState(false)
+  const wrapRef = useRef(null)
+  useEffect(() => {
+    if (!open) return
+    const onDoc = e => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false) }
+    const onKey = e => { if (e.key === 'Escape') setOpen(false) }
+    document.addEventListener('mousedown', onDoc)
+    document.addEventListener('keydown', onKey)
+    return () => { document.removeEventListener('mousedown', onDoc); document.removeEventListener('keydown', onKey) }
+  }, [open])
+
+  const title = source ? (source.title || source.url || `Source ${n}`) : `Source ${n}`
+  const passage = source?.snippet || ''
+  const quote = passage ? bestSentence(passage, claim) : null
+  const typeLabel = SOURCE_TYPE_LABEL[source?.source_type] || 'Source'
+
+  return (
+    <span ref={wrapRef} className="relative inline-block align-baseline no-print">
+      <button type="button" onClick={() => setOpen(o => !o)} aria-expanded={open} title={`Check source ${n}`}
+        className="cursor-pointer align-baseline">
+        <sup className="ml-px font-mono text-[0.72em] font-semibold text-accent transition-opacity hover:opacity-60">[{n}]</sup>
+      </button>
+      {open && (
+        <span role="dialog" aria-label={`Source ${n}`}
+          className="absolute left-0 top-full z-50 mt-1.5 block w-[min(22rem,82vw)] rounded-md border border-line-strong bg-paper p-3.5 text-left shadow-lift">
+          <span className="mb-2 flex items-center gap-2">
+            <span className="grid h-5 min-w-5 place-items-center rounded-sm bg-accent px-1 font-mono text-[10px] font-semibold text-on-accent">{n}</span>
+            <span className="font-mono text-[9px] uppercase tracking-[0.14em] text-faint">{typeLabel}</span>
+          </span>
+          <span className="mb-1.5 block font-sans text-[13px] font-semibold leading-snug text-ink">{title}</span>
+          {passage && (
+            <span className="block max-h-40 overflow-y-auto font-sans text-[12px] leading-relaxed text-muted">
+              <HighlightedPassage passage={passage} quote={quote} />
+            </span>
+          )}
+          {quote && (
+            <span className="mt-2 block font-mono text-[9px] uppercase tracking-[0.12em] text-faint">Highlighted line supports this claim</span>
+          )}
+          {source?.url && (
+            <a href={source.url} target="_blank" rel="noopener noreferrer"
+              className="mt-2.5 inline-flex items-center gap-1 font-mono text-[10px] uppercase tracking-[0.1em] text-accent hover:opacity-70">
+              Open source <Icon name="north_east" style={{ fontSize: '12px' }} />
+            </a>
+          )}
+        </span>
+      )}
+    </span>
+  )
+}
+
+// Detect whether a rendered block (paragraph / list item) contains a citation.
+function nodeHasCitation(node) {
+  if (!node) return false
+  if (node.tagName === 'a' && typeof node.properties?.href === 'string' && node.properties.href.startsWith('#cite-')) return true
+  return (node.children || []).some(nodeHasCitation)
+}
+function nodeText(node) {
+  if (!node) return ''
+  if (node.type === 'text') return node.value || ''
+  return (node.children || []).map(nodeText).join('')
+}
+// Component factory: flags substantive blocks that carry no citation when the
+// "unverified" lens is on, so the reader can see which claims aren't sourced.
+function unverifiedBlock(Tag, show) {
+  return ({ node, children, ...props }) => {
+    if (show && nodeText(node).trim().length >= 40 && !nodeHasCitation(node)) {
+      return <Tag {...props} className="fusion-unverified">{children}</Tag>
+    }
+    return <Tag {...props}>{children}</Tag>
+  }
+}
+
+function Markdown({ children, sources = [], showUnverified = false }) {
   const text = children || ''
+  const claims = sources.length ? buildClaims(text, sources.length) : {}
   // Turn inline [n] markers into clickable citation refs (only when a matching
   // source exists), so answers cite claim-by-claim like a real research paper.
   const processed = sources.length
@@ -118,9 +248,14 @@ function Markdown({ children, sources = [] }) {
         components={{
           a: ({ node, href, children: c, ...props }) => {
             const match = /^#cite-(\d+)$/.exec(href || '')
-            if (match) return <CitationRef n={Number(match[1])} source={sources[Number(match[1]) - 1]} />
+            if (match) {
+              const num = Number(match[1])
+              return <CitationRef n={num} source={sources[num - 1]} claim={claims[num]} />
+            }
             return <a href={href} target="_blank" rel="noopener noreferrer" {...props}>{c}</a>
           },
+          p: unverifiedBlock('p', showUnverified),
+          li: unverifiedBlock('li', showUnverified),
         }}>
         {processed}
       </ReactMarkdown>
@@ -494,7 +629,22 @@ function DocViewerModal({ doc, onClose }) {
 
 // ─── New Research View ────────────────────────────────────────────────────────
 
-function NewResearchView({ onSubmit, isLoading, documents, onUpload, onReuse, onRemoveDoc, onViewDoc, docPending, docError, removingDocIds }) {
+// Toggle for Deep Research mode — plan sub-questions, search each, write a report.
+function DeepToggle({ active, onToggle, disabled }) {
+  return (
+    <button type="button" onClick={onToggle} disabled={disabled} aria-pressed={active}
+      title="Deep Research: plan sub-questions, search each, then write a structured cited report (~1 min)"
+      className="inline-flex h-9 shrink-0 items-center gap-1.5 rounded-sm border px-2.5 font-mono text-[10px] uppercase tracking-[0.12em] transition-colors disabled:cursor-not-allowed disabled:opacity-40"
+      style={active
+        ? { borderColor: '#c4402e', backgroundColor: 'rgba(196,64,46,0.08)', color: '#c4402e' }
+        : { borderColor: '#e4dac6', color: '#6f675b' }}>
+      <Icon name="travel_explore" style={{ fontSize: '14px', ...(active ? { fontVariationSettings: "'FILL' 1" } : {}) }} />
+      Deep
+    </button>
+  )
+}
+
+function NewResearchView({ onSubmit, isLoading, documents, onUpload, onReuse, onRemoveDoc, onViewDoc, docPending, docError, removingDocIds, deepMode, onToggleDeep }) {
   const [query, setQuery] = useState('')
 
   function handleSubmit(e) {
@@ -541,6 +691,7 @@ function NewResearchView({ onSubmit, isLoading, documents, onUpload, onReuse, on
               autoFocus
             />
             <div className="flex items-center gap-1 pb-1">
+              <DeepToggle active={deepMode} onToggle={onToggleDeep} disabled={isLoading} />
               <AttachButton onSelect={onUpload} disabled={isLoading || !!docPending} />
               <ReuseButton onReuse={onReuse} existingIds={new Set(documents.map(d => d.id))} disabled={isLoading || !!docPending} />
               <motion.button
@@ -562,7 +713,9 @@ function NewResearchView({ onSubmit, isLoading, documents, onUpload, onReuse, on
             </div>
           )}
           <p className="mt-4 text-center font-mono text-[11px] uppercase tracking-[0.14em] text-faint">
-            Enter to send · Shift+Enter for a new line · attach PDF / Word / TXT
+            {deepMode
+              ? 'Deep Research on · plans, searches each angle, writes a cited report (~1 min)'
+              : 'Enter to send · Shift+Enter for a new line · attach PDF / Word / TXT'}
           </p>
         </motion.form>
 
@@ -624,24 +777,80 @@ function friendlyError(message) {
 }
 
 function exportMarkdown(message) {
-  const parts = [message.content || '']
+  const title = message.query ? message.query.trim() : 'FusionAI research'
+  const parts = [`# ${title}`, '']
+  if (message.confidence) {
+    parts.push(`> **Confidence:** ${message.confidence}${message.confidenceReason ? ` — ${message.confidenceReason}` : ''}`, '')
+  }
+  parts.push(message.content || '')
   if (message.sources && message.sources.length) {
-    parts.push('', '## Sources')
+    parts.push('', '## References')
     message.sources.forEach((s, i) => {
       const label = s.title || s.url || 'source'
-      parts.push(`${i + 1}. ${label}${s.url ? ' — ' + s.url : ''}`)
+      parts.push(`${i + 1}. **${label}**${s.url ? ` — <${s.url}>` : ''}`)
+      if (s.snippet) parts.push(`   > ${s.snippet.replace(/\s+/g, ' ').slice(0, 400)}`)
     })
   }
-  parts.push('', '_Generated by FusionAI_')
+  parts.push('', `_Generated by FusionAI · ${new Date().toLocaleString()}_`)
   const blob = new Blob([parts.join('\n')], { type: 'text/markdown;charset=utf-8' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
   a.href = url
-  a.download = 'fusionai-answer.md'
+  a.download = 'fusionai-report.md'
   document.body.appendChild(a)
   a.click()
   a.remove()
   URL.revokeObjectURL(url)
+}
+
+// Print just one receipt (answer + references) to PDF via the browser's print
+// dialog. A print stylesheet in index.css hides everything but the .print-target.
+function printReceipt(receiptId) {
+  const el = document.getElementById(receiptId)
+  if (!el) return
+  el.classList.add('print-target')
+  const cleanup = () => { el.classList.remove('print-target'); window.removeEventListener('afterprint', cleanup) }
+  window.addEventListener('afterprint', cleanup)
+  window.print()
+  // Safety net for browsers that don't fire afterprint reliably.
+  setTimeout(cleanup, 1000)
+}
+
+// Deep Research live plan: each sub-question the agent is investigating, with
+// its state (pending → searching → done) and how many new sources it turned up.
+function DeepStepList({ steps, active }) {
+  const doneCount = steps.filter(s => s.state === 'done').length
+  return (
+    <div className="mb-4 rounded-sm border border-line bg-paper-2 p-3.5">
+      <div className="mb-2.5 flex items-center justify-between">
+        <span className="inline-flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-[0.14em] text-faint">
+          <Icon name="account_tree" style={{ fontSize: '13px' }} />
+          Research plan
+        </span>
+        <span className="font-mono text-[10px] text-faint">{doneCount}/{steps.length}</span>
+      </div>
+      <div className="flex flex-col gap-1.5">
+        {steps.map((s, i) => (
+          <div key={i} className="flex items-start gap-2.5">
+            <span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center">
+              {s.state === 'done'
+                ? <Icon name="check_circle" style={{ fontSize: '14px', color: '#4b6b53' }} />
+                : s.state === 'searching'
+                  ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-accent border-t-transparent" />
+                  : <span className="h-1.5 w-1.5 rounded-full bg-faint" />}
+            </span>
+            <span className="flex-1 font-sans text-[13px] leading-snug"
+              style={{ color: s.state === 'pending' ? '#9a9082' : '#1a1613' }}>
+              {s.label || `Step ${i + 1}`}
+            </span>
+            {s.state === 'done' && typeof s.found === 'number' && (
+              <span className="mt-0.5 shrink-0 font-mono text-[10px] text-faint">+{s.found} src</span>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  )
 }
 
 function AssistantMessage({ message, onSuggestion, onRegenerate, isLast, streamingStatus }) {
@@ -651,6 +860,9 @@ function AssistantMessage({ message, onSuggestion, onRegenerate, isLast, streami
   const followUps = streaming ? [] : (message.followUps || [])
   const time = new Date(message.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
   const [copied, setCopied] = useState(false)
+  const [showUnverified, setShowUnverified] = useState(false)
+  const receiptId = `receipt-${message.id}`
+  const steps = message.steps || []
 
   async function handleCopy() {
     try {
@@ -665,6 +877,7 @@ function AssistantMessage({ message, onSuggestion, onRegenerate, isLast, streami
 
   return (
     <motion.div
+      id={receiptId}
       initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.4, ease: 'easeOut' }}
       className="relative overflow-hidden rounded-md border border-line bg-paper">
@@ -674,7 +887,9 @@ function AssistantMessage({ message, onSuggestion, onRegenerate, isLast, streami
         <div className="mb-4 flex items-center justify-between gap-3">
           <span className="inline-flex items-center gap-2 text-ink">
             <FusionMark size={17} />
-            <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-faint">Research receipt</span>
+            <span className="font-mono text-[10px] uppercase tracking-[0.16em] text-faint">
+              {message.deep ? 'Deep research report' : 'Research receipt'}
+            </span>
           </span>
           {done && message.confidence && (
             <span title={message.confidenceReason || ''} className="cursor-help">
@@ -684,6 +899,9 @@ function AssistantMessage({ message, onSuggestion, onRegenerate, isLast, streami
             </span>
           )}
         </div>
+
+        {/* deep research plan checklist */}
+        {steps.length > 0 && <DeepStepList steps={steps} active={streaming} />}
 
         {/* body */}
         {streaming && !message.content ? (
@@ -704,7 +922,7 @@ function AssistantMessage({ message, onSuggestion, onRegenerate, isLast, streami
           </div>
         ) : (
           <div className="relative" aria-live="polite">
-            <Markdown sources={sources}>{message.content}</Markdown>
+            <Markdown sources={sources} showUnverified={showUnverified}>{message.content}</Markdown>
             {streaming && <span className="ml-0.5 inline-block h-4 w-1.5 animate-pulse rounded-sm bg-accent align-middle" />}
           </div>
         )}
@@ -740,7 +958,7 @@ function AssistantMessage({ message, onSuggestion, onRegenerate, isLast, streami
 
         {/* follow-ups as ledger rows */}
         {followUps.length > 0 && (
-          <div className="mt-5">
+          <div className="mt-5 no-print">
             <TearLine />
             <p className="pb-1 pt-4 font-mono text-[10px] uppercase tracking-[0.16em] text-faint">Next questions</p>
             <div className="flex flex-col">
@@ -758,12 +976,26 @@ function AssistantMessage({ message, onSuggestion, onRegenerate, isLast, streami
 
         {/* actions */}
         {done && (
-          <div className="mt-5 flex items-center gap-1">
+          <div className="mt-5 flex flex-wrap items-center gap-1 no-print">
             <button onClick={handleCopy} aria-label="Copy answer" title="Copy answer"
               className="inline-flex items-center gap-1.5 rounded px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] transition-colors hover:bg-paper-2"
               style={{ color: copied ? '#4b6b53' : '#6f675b' }}>
               <Icon name={copied ? 'check' : 'content_copy'} style={{ fontSize: '13px' }} />
               {copied ? 'Copied' : 'Copy'}
+            </button>
+            {sources.length > 0 && (
+              <button onClick={() => setShowUnverified(v => !v)} aria-pressed={showUnverified}
+                title={showUnverified ? 'Hide unverified-claim highlights' : 'Highlight claims with no source'}
+                className="inline-flex items-center gap-1.5 rounded px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] transition-colors hover:bg-paper-2"
+                style={{ color: showUnverified ? '#c4402e' : '#6f675b' }}>
+                <Icon name={showUnverified ? 'visibility_off' : 'verified'} style={{ fontSize: '13px' }} />
+                {showUnverified ? 'Hide checks' : 'Verify'}
+              </button>
+            )}
+            <button onClick={() => printReceipt(receiptId)} aria-label="Save as PDF" title="Print / Save as PDF"
+              className="inline-flex items-center gap-1.5 rounded px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] text-muted transition-colors hover:bg-paper-2">
+              <Icon name="picture_as_pdf" style={{ fontSize: '13px' }} />
+              PDF
             </button>
             <button onClick={() => exportMarkdown(message)} aria-label="Export answer as Markdown" title="Export as Markdown"
               className="inline-flex items-center gap-1.5 rounded px-2 py-1 font-mono text-[10px] uppercase tracking-[0.1em] text-muted transition-colors hover:bg-paper-2">
@@ -1202,6 +1434,7 @@ function ResearchApp({ onLogout }) {
   const [isLoading, setIsLoading] = useState(false)
   const [statusMsg, setStatusMsg] = useState('')
   const [followUp, setFollowUp] = useState('')
+  const [deepMode, setDeepMode] = useState(false) // Deep Research: multi-step, cited report
   const [processingIds, setProcessingIds] = useState(new Set())
   const [documents, setDocuments] = useState([])
   const [docPending, setDocPending] = useState(null)
@@ -1326,19 +1559,27 @@ function ResearchApp({ onLogout }) {
     setAtBottom(true)
     setView('chat')
 
+    const deep = deepMode
     const assistantId = `a-${Date.now()}`
     const userMessage = { id: `u-${Date.now()}`, role: 'user', content: query, timestamp: new Date() }
-    const placeholder = { id: assistantId, role: 'assistant', content: '', streaming: true, query, sources: [], tools_used: [], followUps: [], timestamp: new Date() }
+    const placeholder = { id: assistantId, role: 'assistant', content: '', streaming: true, query, deep, steps: [], sources: [], tools_used: [], followUps: [], timestamp: new Date() }
     setMessages(prev => [...prev, ...(skipUserMessage ? [] : [userMessage]), placeholder])
 
     const patch = updater => setMessages(prev => prev.map(m => (m.id === assistantId ? { ...m, ...updater(m) } : m)))
 
     try {
-      await streamResearch({ query, session_id: sessionId }, {
+      await streamResearch({ query, session_id: sessionId, deep }, {
         signal: controller.signal,
         onEvent: ev => {
           if (ev.type === 'session') setSessionId(ev.session_id)
           else if (ev.type === 'status') setStatusMsg(ev.message)
+          else if (ev.type === 'plan') patch(() => ({ steps: (ev.steps || []).map(label => ({ label, state: 'pending' })) }))
+          else if (ev.type === 'step') patch(m => {
+            const steps = [...(m.steps || [])]
+            while (steps.length <= ev.index) steps.push({ label: '', state: 'pending' })
+            steps[ev.index] = { label: ev.label ?? steps[ev.index].label, state: ev.state, found: ev.found ?? steps[ev.index].found }
+            return { steps }
+          })
           else if (ev.type === 'token') patch(m => ({ content: m.content + ev.text }))
           else if (ev.type === 'done') {
             setSessionId(ev.session_id)
@@ -1496,6 +1737,8 @@ function ResearchApp({ onLogout }) {
             docPending={docPending}
             docError={docError}
             removingDocIds={removingDocIds}
+            deepMode={deepMode}
+            onToggleDeep={() => setDeepMode(v => !v)}
           />
         )}
 
@@ -1565,6 +1808,7 @@ function ResearchApp({ onLogout }) {
                     </div>
                   )}
                   <form onSubmit={handleFollowUp} className="flex items-end gap-1.5 p-1">
+                    <DeepToggle active={deepMode} onToggle={() => setDeepMode(v => !v)} disabled={isLoading} />
                     <AttachButton onSelect={handleUploadDocument} disabled={isLoading || !!docPending} />
                     <ReuseButton onReuse={handleReuseDocument} existingIds={new Set(documents.map(d => d.id))} disabled={isLoading || !!docPending} />
                     <AutoGrowTextarea
