@@ -1,0 +1,35 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: fusionai-gateway
+  datasource:
+    url: jdbc:h2:file:./data/gateway;AUTO_SERVER=TRUE
+    driver-class-name: org.h2.Driver
+    username: sa
+    password: ""
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+
+# App settings (override via environment variables in production)
+fusionai:
+  backend-url: ${FUSIONAI_BACKEND_URL:http://localhost:5001}
+  # Shared secret sent to FastAPI so it only accepts requests from this gateway.
+  # Must match GATEWAY_SHARED_SECRET on the FastAPI side. Empty = don't send it.
+  gateway-secret: ${FUSIONAI_GATEWAY_SECRET:}
+  cors-origins: ${FUSIONAI_CORS_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}
+  jwt:
+    # MUST be at least 32 characters. Override in production with a long random value.
+    secret: ${FUSIONAI_JWT_SECRET:dev-only-change-me-a-very-long-random-secret-key-256-bits}
+    expiry-minutes: ${FUSIONAI_JWT_EXPIRY_MINUTES:1440}
+  ratelimit:
+    default-per-minute: ${FUSIONAI_RATELIMIT_DEFAULT:120}
+    llm-per-minute: ${FUSIONAI_RATELIMIT_LLM:20}
+
+logging:
+  level:
+    root: INFO
+    studio.fusionai.gateway: INFO
