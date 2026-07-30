@@ -17,7 +17,7 @@ from schemas import (
     ResearchResultSummary,
     SourceOut,
 )
-from services.ai import run_research, run_research_stream
+from services.ai import plan_subquestions, run_report_stream, run_research, run_research_stream
 from services.cache import ResearchCache
 from services.documents import document_cache_key, document_sources_for_session, retrieve_document_context
 from services.sessions import WorkspaceAccessError, add_message, get_or_create_session, get_recent_history
@@ -336,6 +336,139 @@ def stream_research_events(
         }
     except Exception as exc:  # noqa: BLE001 — surface a clean error event to the client
         logger.exception("streaming research failed: %s", exc)
+        yield {"type": "error", "message": str(exc)}
+    finally:
+        db.close()
+
+
+def _dedupe_source_list(sources: list[SourceOut]) -> list[SourceOut]:
+    seen: set[tuple[str, str | None]] = set()
+    unique: list[SourceOut] = []
+    for source in sources:
+        key = (source.title.lower().strip(), source.url)
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append(source)
+    return unique
+
+
+def stream_deep_research_events(
+    query: str,
+    session_id: str | None,
+    owner_id: str,
+    max_sources: int = 12,
+) -> Iterator[dict]:
+    """Deep Research: plan sub-questions, search each in turn, then synthesize a
+    single structured, cited report. Emits progress events (plan / step / status)
+    around the same token/final/done contract as the single-shot stream, so the
+    client renders a live checklist while the investigation runs.
+
+    Not cached — every deep run is a fresh, multi-search investigation.
+    """
+    db = SessionLocal()
+    try:
+        started = time.perf_counter()
+        try:
+            session = get_or_create_session(db, session_id, owner_id, title=title_from_query(query))
+        except WorkspaceAccessError:
+            yield {"type": "error", "message": "Session not found"}
+            return
+
+        add_message(db, session, "user", query)
+        yield {"type": "session", "session_id": session.id}
+        has_key = bool(get_settings().openai_api_key)
+
+        # 1. Plan — break the question into focused sub-questions.
+        yield {"type": "status", "message": "Planning the investigation…"}
+        subquestions = plan_subquestions(query)
+        yield {"type": "plan", "steps": subquestions}
+        search_targets = subquestions or [query]
+
+        # 2. Retrieve the user's document context once for the overall question.
+        document_sources = retrieve_document_context(db, session.id, query)
+        aggregated: list[SourceOut] = list(document_sources)
+
+        # 3. Search each sub-question in turn, accumulating de-duplicated sources.
+        for index, sub in enumerate(search_targets):
+            yield {"type": "step", "index": index, "total": len(search_targets), "label": sub, "state": "searching"}
+            web_sources = gather_sources(sub) if needs_search(sub) else []
+            before = len(aggregated)
+            aggregated = _dedupe_source_list([*aggregated, *web_sources])
+            yield {
+                "type": "step",
+                "index": index,
+                "total": len(search_targets),
+                "label": sub,
+                "state": "done",
+                "found": max(len(aggregated) - before, 0),
+            }
+
+        sources = aggregated[:max_sources]
+
+        # 4. Synthesize the report, streaming tokens to the client.
+        yield {"type": "status", "message": "Writing the report…"}
+        history = get_recent_history(db, session.id)
+        answer_parts: list[str] = []
+        follow_ups: list[str] = []
+        for event in run_report_stream(query, subquestions, sources, history):
+            if event["type"] == "token":
+                answer_parts.append(event["text"])
+                yield event
+            elif event["type"] == "final":
+                follow_ups = event.get("follow_up_questions", [])
+                if event.get("answer"):
+                    answer_parts = [event["answer"]]
+
+        answer = "".join(answer_parts).strip() or "No report was generated."
+        tools_used: list[str] = []
+        if any(s.source_type == "wikipedia" for s in sources):
+            tools_used.append("wikipedia")
+        if any(s.source_type == "web" for s in sources):
+            tools_used.append("search")
+        if document_sources:
+            tools_used.append("documents")
+        tools_used.append("deep-research")
+        tools_used.append("openai" if has_key else "fallback")
+
+        n_sources = len(sources)
+        if not has_key:
+            confidence = "low"
+        elif n_sources >= 3:
+            confidence = "high"
+        elif n_sources >= 1:
+            confidence = "medium"
+        else:
+            confidence = "low"
+
+        payload = AIResearchPayload(
+            answer=answer,
+            summary=_plain_summary(answer),
+            sources=sources,
+            tools_used=tools_used,
+            confidence=confidence,
+            follow_up_questions=follow_ups,
+        )
+
+        latency_ms = int((time.perf_counter() - started) * 1000)
+        result = _persist_result(db, session.id, query, payload, False, latency_ms)
+        add_message(db, session, "assistant", payload.answer)
+
+        yield {
+            "type": "done",
+            "session_id": session.id,
+            "result_id": result.id,
+            "citations": [source.model_dump(mode="json") for source in payload.sources],
+            "tools_used": payload.tools_used,
+            "confidence": payload.confidence,
+            "confidence_reason": _confidence_reason(payload.confidence, len(payload.sources)),
+            "follow_up_questions": payload.follow_up_questions,
+            "cached": False,
+            "latency_ms": latency_ms,
+            "deep": True,
+        }
+    except Exception as exc:  # noqa: BLE001 — surface a clean error event to the client
+        logger.exception("deep research failed: %s", exc)
         yield {"type": "error", "message": str(exc)}
     finally:
         db.close()

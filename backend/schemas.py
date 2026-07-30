@@ -35,6 +35,10 @@ class SourceOut(BaseModel):
 class ResearchRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length=1200)
     session_id: str | None = None
+    # When true, run the multi-step "Deep Research" workflow (plan sub-questions
+    # → search each → synthesize a structured, cited report) instead of a single
+    # streamed answer. Rides the same streaming endpoint.
+    deep: bool = False
 
     @field_validator("query")
     @classmethod

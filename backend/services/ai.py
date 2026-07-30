@@ -212,6 +212,10 @@ add its number inline in square brackets, like [1] or [2], right after the state
 Cite only sources that are actually listed, and never invent a citation number. If no
 sources are provided, do not add any brackets.
 
+If the sources disagree on a fact, do not hide it. Add a short Markdown blockquote that
+begins with "⚠️ Sources disagree:" and names what each side claims (with citations),
+e.g. "> ⚠️ Sources disagree: [1] reports X, while [3] says Y."
+
 After the answer, output a line containing exactly {sentinel} and then up to three short,
 specific follow-up questions the user might ask next — one per line, no numbering.
 
@@ -264,55 +268,193 @@ def run_research_stream(
     try:
         prompt, llm = _get_stream_llm_and_prompt()
         chain = prompt | llm
-        buffer = ""
-        emitted = 0
-        marker_found = False
-        holdback = len(_MARKER) + 8  # never emit a forming marker or its decoration
-        for chunk in chain.stream(
-            {"query": query, "chat_history": history_text, "retrieved_context": source_context(sources)}
-        ):
-            piece = chunk.content
-            if isinstance(piece, list):
-                piece = "".join(
-                    block.get("text", "") if isinstance(block, dict) else str(block) for block in piece
-                )
-            if not piece:
-                continue
-            buffer += piece
-            if marker_found:
-                continue
-            idx = buffer.find(_MARKER)
-            if idx == -1:
-                safe = len(buffer) - holdback
-                if safe > emitted:
-                    yield {"type": "token", "text": buffer[emitted:safe]}
-                    emitted = safe
-            else:
-                answer_end = idx
-                while answer_end > emitted and buffer[answer_end - 1] in _MARKER_DECOR:
-                    answer_end -= 1
-                if answer_end > emitted:
-                    yield {"type": "token", "text": buffer[emitted:answer_end]}
-                emitted = answer_end
-                marker_found = True
-
-        follow_ups: list[str] = []
-        marker_idx = buffer.find(_MARKER)
-        if marker_idx == -1:
-            if len(buffer) > emitted:
-                yield {"type": "token", "text": buffer[emitted:]}
-            answer = buffer
-        else:
-            answer_end = marker_idx
-            while answer_end > 0 and buffer[answer_end - 1] in _MARKER_DECOR:
-                answer_end -= 1
-            answer = buffer[:answer_end]
-            tail = buffer[marker_idx + len(_MARKER):]
-            follow_ups = [line.strip("-•*<>#: \t").strip() for line in tail.splitlines() if line.strip()]
-            follow_ups = [f for f in follow_ups if len(f) > 3][:3]
-        answer = answer.strip()
-        yield {"type": "final", "answer": answer, "follow_up_questions": follow_ups}
+        yield from _consume_stream(
+            chain,
+            {"query": query, "chat_history": history_text, "retrieved_context": source_context(sources)},
+        )
     except Exception as exc:
         logger.warning("AI streaming failed, using fallback: %s", exc)
+        payload = _fallback_payload(query, str(exc), sources or None)
+        yield from _stream_static(payload.answer, payload.follow_up_questions)
+
+
+def _consume_stream(chain, inputs: dict) -> Iterator[dict]:
+    """Stream a chain that writes a Markdown answer, then the {sentinel} line, then
+    follow-up questions. Emits {'type':'token'} events for the answer body while
+    holding back any forming follow-up marker, and a final {'type':'final'} event
+    with the cleaned answer + parsed follow-up questions. Shared by the single-shot
+    answer stream and the Deep Research report stream."""
+    buffer = ""
+    emitted = 0
+    marker_found = False
+    holdback = len(_MARKER) + 8  # never emit a forming marker or its decoration
+    for chunk in chain.stream(inputs):
+        piece = chunk.content
+        if isinstance(piece, list):
+            piece = "".join(
+                block.get("text", "") if isinstance(block, dict) else str(block) for block in piece
+            )
+        if not piece:
+            continue
+        buffer += piece
+        if marker_found:
+            continue
+        idx = buffer.find(_MARKER)
+        if idx == -1:
+            safe = len(buffer) - holdback
+            if safe > emitted:
+                yield {"type": "token", "text": buffer[emitted:safe]}
+                emitted = safe
+        else:
+            answer_end = idx
+            while answer_end > emitted and buffer[answer_end - 1] in _MARKER_DECOR:
+                answer_end -= 1
+            if answer_end > emitted:
+                yield {"type": "token", "text": buffer[emitted:answer_end]}
+            emitted = answer_end
+            marker_found = True
+
+    follow_ups: list[str] = []
+    marker_idx = buffer.find(_MARKER)
+    if marker_idx == -1:
+        if len(buffer) > emitted:
+            yield {"type": "token", "text": buffer[emitted:]}
+        answer = buffer
+    else:
+        answer_end = marker_idx
+        while answer_end > 0 and buffer[answer_end - 1] in _MARKER_DECOR:
+            answer_end -= 1
+        answer = buffer[:answer_end]
+        tail = buffer[marker_idx + len(_MARKER):]
+        follow_ups = [line.strip("-•*<>#: \t").strip() for line in tail.splitlines() if line.strip()]
+        follow_ups = [f for f in follow_ups if len(f) > 3][:3]
+    yield {"type": "final", "answer": answer.strip(), "follow_up_questions": follow_ups}
+
+
+# ─── Deep Research (multi-step) ────────────────────────────────────────────────
+
+
+def plan_subquestions(query: str, max_questions: int = 4) -> list[str]:
+    """Break a research question into a few focused sub-questions to investigate.
+    Returns [] when no API key is configured (caller then researches the query
+    directly)."""
+    settings = get_settings()
+    if not settings.openai_api_key:
+        return []
+    try:
+        from langchain_openai import ChatOpenAI
+
+        llm = ChatOpenAI(
+            model=settings.openai_model,
+            max_tokens=300,
+            api_key=settings.openai_api_key,
+            timeout=settings.openai_timeout_seconds,
+            max_retries=1,
+        )
+        instruction = (
+            f"Break the research task below into {max_questions} focused, non-overlapping "
+            "sub-questions that together fully answer it. Output ONLY the sub-questions, "
+            "one per line, no numbering or extra text.\n\nResearch task: " + query
+        )
+        response = llm.invoke(instruction)
+        content = response.content
+        if isinstance(content, list):
+            content = " ".join(
+                block.get("text", "") if isinstance(block, dict) else str(block) for block in content
+            )
+        lines = [line.strip("-•*0123456789.) \t").strip() for line in str(content).splitlines()]
+        questions = [line for line in lines if len(line) > 8]
+        return questions[:max_questions]
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("sub-question planning failed: %s", exc)
+        return []
+
+
+@lru_cache(maxsize=1)
+def _get_report_llm_and_prompt():
+    """Streaming chain that writes a structured, cited research report."""
+    from langchain_openai import ChatOpenAI
+    from langchain_core.prompts import ChatPromptTemplate
+
+    settings = get_settings()
+    prompt = ChatPromptTemplate.from_messages(
+        [
+            (
+                "system",
+                """You are FusionAI, writing a thorough research report from many sources.
+
+You investigated the question through the sub-questions listed below and gathered the
+numbered source context. Write a well-structured Markdown report that synthesizes it:
+- Open with a one-paragraph **Executive summary**.
+- Use a second-level heading (##) for each major theme or sub-question, in logical order.
+- End with a "## Bottom line" section giving the direct answer to the original question.
+
+Ground every claim: when a statement is supported by a numbered source, add its number
+inline in square brackets like [1] or [2] right after it. Cite only sources that are
+actually listed; never invent a number. Prefer evidence over filler; do not fabricate.
+
+If the sources disagree on a fact, surface it in a Markdown blockquote beginning with
+"⚠️ Sources disagree:" that names what each side claims (with citations).
+
+Sub-questions investigated:
+{subquestions}
+
+Retrieved source context:
+{retrieved_context}
+
+Chat history:
+{chat_history}
+
+After the report, output a line containing exactly {sentinel} and then up to three
+specific follow-up questions — one per line, no numbering.""",
+            ),
+            ("human", "Original research question: {query}"),
+        ]
+    ).partial(sentinel=_STREAM_SENTINEL)
+
+    llm = ChatOpenAI(
+        model=settings.openai_model,
+        max_tokens=settings.max_tokens,
+        api_key=settings.openai_api_key,
+        timeout=settings.openai_timeout_seconds,
+        max_retries=2,
+    )
+    return prompt, llm
+
+
+def run_report_stream(
+    query: str,
+    subquestions: Sequence[str],
+    retrieved_sources: list[SourceOut] | None = None,
+    chat_history: Sequence[dict[str, str]] | None = None,
+) -> Iterator[dict]:
+    """Stream a Deep Research report grounded in the aggregated sources."""
+    settings = get_settings()
+    sources = retrieved_sources or []
+    history_text = "\n".join(
+        f"{item.get('role', 'user')}: {item.get('content', '')}"
+        for item in (chat_history or [])[-6:]
+    )
+    subq_text = "\n".join(f"- {q}" for q in subquestions) or "- (researched the question directly)"
+
+    if not settings.openai_api_key:
+        payload = _fallback_payload(query, "OPENAI_API_KEY is missing", sources or None)
+        yield from _stream_static(payload.answer, payload.follow_up_questions)
+        return
+
+    try:
+        prompt, llm = _get_report_llm_and_prompt()
+        chain = prompt | llm
+        yield from _consume_stream(
+            chain,
+            {
+                "query": query,
+                "subquestions": subq_text,
+                "chat_history": history_text,
+                "retrieved_context": source_context(sources),
+            },
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Deep Research streaming failed, using fallback: %s", exc)
         payload = _fallback_payload(query, str(exc), sources or None)
         yield from _stream_static(payload.answer, payload.follow_up_questions)

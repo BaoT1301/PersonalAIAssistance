@@ -50,6 +50,7 @@ from services.research import (
     get_research_result,
     list_session_results,
     research_query,
+    stream_deep_research_events,
     stream_research_events,
 )
 from services.sessions import WorkspaceAccessError, create_session, delete_session, get_session_detail, list_sessions, update_session_title
@@ -259,8 +260,15 @@ async def research_stream(
 ) -> StreamingResponse:
     """Stream a research answer as newline-delimited JSON events. If the client
     disconnects (e.g. the user hits Stop), the generator is closed, which stops
-    the in-progress model call and skips persisting a half-finished answer."""
-    generator = stream_research_events(payload.query.strip(), payload.session_id, workspace_id)
+    the in-progress model call and skips persisting a half-finished answer.
+
+    When ``deep`` is set, run the multi-step Deep Research workflow (plan →
+    search each sub-question → synthesize a cited report) over the same stream.
+    """
+    if payload.deep:
+        generator = stream_deep_research_events(payload.query.strip(), payload.session_id, workspace_id)
+    else:
+        generator = stream_research_events(payload.query.strip(), payload.session_id, workspace_id)
     stream_end = object()
 
     def next_event():
