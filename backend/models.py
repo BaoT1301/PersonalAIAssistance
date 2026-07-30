@@ -102,3 +102,21 @@ class Document(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
     session: Mapped[ResearchSession] = relationship(back_populates="documents")
+    chunks: Mapped[list["DocumentChunk"]] = relationship(
+        back_populates="document",
+        cascade="all, delete-orphan",
+    )
+
+
+class DocumentChunk(Base):
+    __tablename__ = "document_chunks"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    document_id: Mapped[str] = mapped_column(ForeignKey("documents.id", ondelete="CASCADE"), index=True)
+    session_id: Mapped[str] = mapped_column(String(36), index=True)
+    chunk_index: Mapped[int] = mapped_column(default=0)
+    content: Mapped[str] = mapped_column(Text)
+    embedding: Mapped[str] = mapped_column(Text)  # JSON-encoded list[float]
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
+
+    document: Mapped["Document"] = relationship(back_populates="chunks")

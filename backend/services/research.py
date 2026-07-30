@@ -19,7 +19,7 @@ from schemas import (
 )
 from services.ai import run_research, run_research_stream
 from services.cache import ResearchCache
-from services.documents import document_cache_key, document_sources_for_session
+from services.documents import document_cache_key, document_sources_for_session, retrieve_document_context
 from services.sessions import WorkspaceAccessError, add_message, get_or_create_session, get_recent_history
 from services.sources import gather_sources, needs_search
 from services.text import normalize_query, title_from_query
@@ -215,6 +215,14 @@ def _plain_summary(answer: str, limit: int = 400) -> str:
     return text[:limit].rstrip() + ("…" if len(text) > limit else "")
 
 
+def _confidence_reason(confidence: str, n_sources: int) -> str:
+    if n_sources == 0:
+        return "No external sources found. This answer draws on general model knowledge only."
+    if confidence == "high":
+        return f"Corroborated by {n_sources} sources."
+    return f"Based on {n_sources} source{'s' if n_sources != 1 else ''}."
+
+
 def _stream_text_events(text: str) -> Iterator[dict]:
     for part in re.split(r"(\s+)", text):
         if part:
@@ -244,7 +252,6 @@ def stream_research_events(
         add_message(db, session, "user", query)
         yield {"type": "session", "session_id": session.id}
 
-        document_sources = document_sources_for_session(db, session.id)
         doc_key = document_cache_key(db, session.id)
         cache_mode = "research" if not doc_key else f"research:session:{session.id}:docs:{doc_key}"
 
@@ -252,10 +259,13 @@ def stream_research_events(
         if cached_payload:
             payload = _payload_from_cache(cached_payload)
             cached = True
+            document_sources = []
             for event in _stream_text_events(payload.answer):
                 yield event
         else:
             cached = False
+            # Retrieve only the most relevant chunks of the user's documents.
+            document_sources = retrieve_document_context(db, session.id, query)
             if needs_search(query):
                 yield {"type": "status", "message": "Searching the web & Wikipedia…"}
                 web_sources = gather_sources(query)
@@ -288,12 +298,22 @@ def stream_research_events(
                 tools_used.append("documents")
             tools_used.append("openai" if has_key else "fallback")
 
+            n_sources = len(sources)
+            if not has_key:
+                confidence = "low"
+            elif n_sources >= 3:
+                confidence = "high"
+            elif n_sources >= 1:
+                confidence = "medium"
+            else:
+                confidence = "low"
+
             payload = AIResearchPayload(
                 answer=answer,
                 summary=_plain_summary(answer),
                 sources=sources,
                 tools_used=tools_used,
-                confidence="high" if sources else "medium",
+                confidence=confidence,
                 follow_up_questions=follow_ups,
             )
             cache.set(normalized_query, _payload_to_cache(payload), mode=cache_mode)
@@ -309,6 +329,7 @@ def stream_research_events(
             "citations": [source.model_dump(mode="json") for source in payload.sources],
             "tools_used": payload.tools_used,
             "confidence": payload.confidence,
+            "confidence_reason": _confidence_reason(payload.confidence, len(payload.sources)),
             "follow_up_questions": payload.follow_up_questions,
             "cached": cached,
             "latency_ms": latency_ms,

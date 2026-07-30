@@ -44,6 +44,11 @@ class Settings:
     )
     max_tokens: int = field(default_factory=lambda: _env_int("MAX_TOKENS", 2000))
 
+    # When set, the API trusts identity ONLY from a gateway that presents this
+    # secret (via X-Gateway-Secret) and reads the user from X-Fusion-User.
+    # Empty (default) keeps the legacy behavior of trusting the workspace header.
+    gateway_shared_secret: str = field(default_factory=lambda: os.getenv("GATEWAY_SHARED_SECRET", ""))
+
     database_url: str = field(default_factory=lambda: os.getenv("DATABASE_URL", "sqlite:///./fusionai.db"))
     auto_create_tables: bool = field(
         default_factory=lambda: _env_bool(
@@ -64,6 +69,15 @@ class Settings:
     source_lookup_enabled: bool = field(default_factory=lambda: _env_bool("SOURCE_LOOKUP_ENABLED", True))
     wikipedia_results: int = field(default_factory=lambda: _env_int("WIKIPEDIA_RESULTS", 1))
     web_search_results: int = field(default_factory=lambda: _env_int("WEB_SEARCH_RESULTS", 3))
+    source_timeout_seconds: int = field(default_factory=lambda: _env_int("SOURCE_TIMEOUT_SECONDS", 6))
+    openai_timeout_seconds: int = field(default_factory=lambda: _env_int("OPENAI_TIMEOUT_SECONDS", 60))
+
+    # Retrieval-augmented generation over uploaded documents.
+    rag_enabled: bool = field(default_factory=lambda: _env_bool("RAG_ENABLED", True))
+    embedding_model: str = field(default_factory=lambda: os.getenv("EMBEDDING_MODEL", "text-embedding-3-small"))
+    rag_chunk_size: int = field(default_factory=lambda: _env_int("RAG_CHUNK_SIZE", 800))
+    rag_chunk_overlap: int = field(default_factory=lambda: _env_int("RAG_CHUNK_OVERLAP", 120))
+    rag_top_k: int = field(default_factory=lambda: _env_int("RAG_TOP_K", 4))
     max_upload_bytes: int = field(default_factory=lambda: _env_int("MAX_UPLOAD_BYTES", 5242880))
     max_document_chars: int = field(default_factory=lambda: _env_int("MAX_DOCUMENT_CHARS", 50000))
 

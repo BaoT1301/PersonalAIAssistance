@@ -22,14 +22,18 @@ settings = get_settings()
 database_url = _normalize_database_url(settings.database_url)
 connect_args = {"check_same_thread": False} if database_url.startswith("sqlite") else {}
 
-engine = create_engine(database_url, pool_pre_ping=True, connect_args=connect_args)
+engine_kwargs = {"pool_pre_ping": True, "connect_args": connect_args}
+if not database_url.startswith("sqlite"):
+    # Tune the pool for real concurrent Postgres load (ignored by SQLite).
+    engine_kwargs.update(pool_size=10, max_overflow=20, pool_recycle=1800)
+engine = create_engine(database_url, **engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def init_db() -> None:
-    from models import Document, Message, ResearchResult, ResearchSession, Source
+    from models import Document, DocumentChunk, Message, ResearchResult, ResearchSession, Source
 
-    _ = (Document, Message, ResearchResult, ResearchSession, Source)
+    _ = (Document, DocumentChunk, Message, ResearchResult, ResearchSession, Source)
     if not settings.auto_create_tables:
         return
     Base.metadata.create_all(bind=engine)
