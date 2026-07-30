@@ -12,7 +12,12 @@ from services.sources import source_context
 logger = logging.getLogger("fusionai.ai")
 
 # Marker the streaming prompt emits between the answer body and follow-up questions.
-_STREAM_SENTINEL = "---FOLLOWUPS---"
+# Angle brackets (not dashes) so the model doesn't turn it into a markdown rule.
+_STREAM_SENTINEL = "<<<FOLLOWUPS>>>"
+# Detection is lenient: we match this invariant token and strip any decoration
+# (dashes, angle brackets, asterisks, whitespace) the model wraps around it.
+_MARKER = "FOLLOWUPS"
+_MARKER_DECOR = set("<>-*#:· \t\r\n")
 
 
 def _fallback_payload(
@@ -118,6 +123,8 @@ Chat history:
         model=settings.openai_model,
         max_tokens=settings.max_tokens,
         api_key=settings.openai_api_key,
+        timeout=settings.openai_timeout_seconds,
+        max_retries=2,
     )
     return prompt, llm, parser
 
@@ -200,6 +207,11 @@ Write the answer as clean Markdown: short paragraphs, **bold** for key terms, bu
 numbered lists where helpful, and `inline code` or fenced code blocks for code. Use
 second-level headings (##) only when the answer clearly has multiple sections.
 
+Cite as you write: when a statement is supported by one of the numbered sources above,
+add its number inline in square brackets, like [1] or [2], right after the statement.
+Cite only sources that are actually listed, and never invent a citation number. If no
+sources are provided, do not add any brackets.
+
 After the answer, output a line containing exactly {sentinel} and then up to three short,
 specific follow-up questions the user might ask next — one per line, no numbering.
 
@@ -217,6 +229,8 @@ Chat history:
         model=settings.openai_model,
         max_tokens=settings.max_tokens,
         api_key=settings.openai_api_key,
+        timeout=settings.openai_timeout_seconds,
+        max_retries=2,
     )
     return prompt, llm
 
@@ -252,7 +266,8 @@ def run_research_stream(
         chain = prompt | llm
         buffer = ""
         emitted = 0
-        sentinel_found = False
+        marker_found = False
+        holdback = len(_MARKER) + 8  # never emit a forming marker or its decoration
         for chunk in chain.stream(
             {"query": query, "chat_history": history_text, "retrieved_context": source_context(sources)}
         ):
@@ -264,28 +279,38 @@ def run_research_stream(
             if not piece:
                 continue
             buffer += piece
-            if sentinel_found:
+            if marker_found:
                 continue
-            idx = buffer.find(_STREAM_SENTINEL)
+            idx = buffer.find(_MARKER)
             if idx == -1:
-                # Hold back the tail in case the sentinel is split across chunks.
-                safe = len(buffer) - len(_STREAM_SENTINEL)
+                safe = len(buffer) - holdback
                 if safe > emitted:
                     yield {"type": "token", "text": buffer[emitted:safe]}
                     emitted = safe
             else:
-                if idx > emitted:
-                    yield {"type": "token", "text": buffer[emitted:idx]}
-                emitted = idx
-                sentinel_found = True
+                answer_end = idx
+                while answer_end > emitted and buffer[answer_end - 1] in _MARKER_DECOR:
+                    answer_end -= 1
+                if answer_end > emitted:
+                    yield {"type": "token", "text": buffer[emitted:answer_end]}
+                emitted = answer_end
+                marker_found = True
 
-        answer, separator, tail = buffer.partition(_STREAM_SENTINEL)
-        if not separator and len(buffer) > emitted:
-            yield {"type": "token", "text": buffer[emitted:]}
-        answer = answer.strip()
         follow_ups: list[str] = []
-        if separator:
-            follow_ups = [line.strip("-•* \t").strip() for line in tail.splitlines() if line.strip()][:3]
+        marker_idx = buffer.find(_MARKER)
+        if marker_idx == -1:
+            if len(buffer) > emitted:
+                yield {"type": "token", "text": buffer[emitted:]}
+            answer = buffer
+        else:
+            answer_end = marker_idx
+            while answer_end > 0 and buffer[answer_end - 1] in _MARKER_DECOR:
+                answer_end -= 1
+            answer = buffer[:answer_end]
+            tail = buffer[marker_idx + len(_MARKER):]
+            follow_ups = [line.strip("-•*<>#: \t").strip() for line in tail.splitlines() if line.strip()]
+            follow_ups = [f for f in follow_ups if len(f) > 3][:3]
+        answer = answer.strip()
         yield {"type": "final", "answer": answer, "follow_up_questions": follow_ups}
     except Exception as exc:
         logger.warning("AI streaming failed, using fallback: %s", exc)

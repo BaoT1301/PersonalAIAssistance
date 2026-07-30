@@ -1,4 +1,5 @@
 from contextlib import asynccontextmanager
+import hmac
 import logging
 import time
 from uuid import uuid4
@@ -8,6 +9,7 @@ from fastapi import Request, Response
 from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.concurrency import run_in_threadpool
 from sqlalchemy.orm import Session
 import json
 
@@ -31,7 +33,15 @@ from schemas import (
     SessionOut,
     SessionUpdate,
 )
-from services.documents import add_document, delete_document, get_document, list_documents
+from services.documents import (
+    add_document,
+    delete_document,
+    get_document,
+    index_document,
+    list_documents,
+    list_owner_documents,
+    reuse_document,
+)
 from services.insights import get_insights
 from services.operations import run_migrations
 from services.research import (
@@ -43,6 +53,7 @@ from services.research import (
     stream_research_events,
 )
 from services.sessions import WorkspaceAccessError, create_session, delete_session, get_session_detail, list_sessions, update_session_title
+from services.search import search_sessions
 from services.uploads import DocumentUploadError, document_from_upload
 
 
@@ -64,6 +75,21 @@ logger = logging.getLogger("fusionai.api")
 
 
 def get_workspace_id(request: Request) -> str:
+    # Gateway mode: when a shared secret is configured, ONLY a gateway that
+    # presents the matching X-Gateway-Secret may call the API, and the identity
+    # comes from the gateway-verified X-Fusion-User header (not client-trusted).
+    if settings.gateway_shared_secret:
+        provided = request.headers.get("x-gateway-secret", "")
+        if not hmac.compare_digest(provided, settings.gateway_shared_secret):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Direct access is not allowed; go through the gateway")
+        user = request.headers.get("x-fusion-user", "").strip()
+        if not user:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
+        if len(user) > 120:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Identity is too long")
+        return user
+
+    # Legacy/dev mode (no gateway): trust the workspace header directly.
     workspace_id = request.headers.get("x-fusion-workspace-id", settings.default_workspace_id).strip()
     if not workspace_id:
         workspace_id = settings.default_workspace_id
@@ -226,15 +252,37 @@ def chat(
 
 
 @app.post("/api/research/stream")
-def research_stream(
+async def research_stream(
+    request: Request,
     payload: ResearchRequest,
     workspace_id: str = Depends(get_workspace_id),
 ) -> StreamingResponse:
-    """Stream a research answer as newline-delimited JSON events (token-by-token)."""
+    """Stream a research answer as newline-delimited JSON events. If the client
+    disconnects (e.g. the user hits Stop), the generator is closed, which stops
+    the in-progress model call and skips persisting a half-finished answer."""
+    generator = stream_research_events(payload.query.strip(), payload.session_id, workspace_id)
+    stream_end = object()
 
-    def event_stream():
-        for event in stream_research_events(payload.query.strip(), payload.session_id, workspace_id):
-            yield json.dumps(event) + "\n"
+    def next_event():
+        # StopIteration must not cross the async boundary (it becomes a
+        # RuntimeError), so convert generator exhaustion to a sentinel here.
+        try:
+            return next(generator)
+        except StopIteration:
+            return stream_end
+
+    async def event_stream():
+        try:
+            while True:
+                if await request.is_disconnected():
+                    break
+                # Advance off the event loop so one stream can't block others.
+                event = await run_in_threadpool(next_event)
+                if event is stream_end:
+                    break
+                yield json.dumps(event) + "\n"
+        finally:
+            generator.close()
 
     return StreamingResponse(
         event_stream(),
@@ -265,6 +313,15 @@ def get_sessions(
     workspace_id: str = Depends(get_workspace_id),
 ) -> list[SessionOut]:
     return list_sessions(db, workspace_id)
+
+
+@app.get("/api/search", response_model=list[SessionOut])
+def search(
+    q: str = "",
+    db: Session = Depends(get_db),
+    workspace_id: str = Depends(get_workspace_id),
+) -> list[SessionOut]:
+    return search_sessions(db, workspace_id, q)
 
 
 @app.get("/api/sessions/{session_id}", response_model=SessionDetail)
@@ -301,6 +358,7 @@ def create_document(
     document = add_document(db, session_id, payload, workspace_id)
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    index_document(document.id)
     return document
 
 
@@ -320,18 +378,43 @@ def get_session_documents(
 async def upload_document(
     session_id: str,
     file: UploadFile = File(...),
-    title: str | None = Form(default=None),
+    title: str | None = Form(default=None, max_length=240),
     db: Session = Depends(get_db),
     workspace_id: str = Depends(get_workspace_id),
 ) -> DocumentOut:
+    data = await file.read()
     try:
-        payload = document_from_upload(file.filename or "", await file.read(), title)
+        # PDF/DOCX parsing is CPU-bound; keep it off the event loop.
+        payload = await run_in_threadpool(document_from_upload, file.filename or "", data, title)
     except DocumentUploadError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     document = add_document(db, session_id, payload, workspace_id)
     if not document:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    await run_in_threadpool(index_document, document.id)
+    return document
+
+
+@app.get("/api/documents", response_model=list[DocumentOut])
+def get_all_documents(
+    db: Session = Depends(get_db),
+    workspace_id: str = Depends(get_workspace_id),
+) -> list[DocumentOut]:
+    return list_owner_documents(db, workspace_id)
+
+
+@app.post("/api/sessions/{session_id}/documents/{document_id}/reuse", response_model=DocumentOut, status_code=status.HTTP_201_CREATED)
+def reuse_existing_document(
+    session_id: str,
+    document_id: str,
+    db: Session = Depends(get_db),
+    workspace_id: str = Depends(get_workspace_id),
+) -> DocumentOut:
+    document = reuse_document(db, document_id, session_id, workspace_id)
+    if not document:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Document or session not found")
+    index_document(document.id)
     return document
 
 

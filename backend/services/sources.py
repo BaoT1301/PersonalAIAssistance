@@ -1,10 +1,13 @@
 from __future__ import annotations
 
+import logging
 import re
 from concurrent.futures import ThreadPoolExecutor
 
 from config import get_settings
 from schemas import SourceOut
+
+logger = logging.getLogger("fusionai.sources")
 
 # Patterns that indicate a conversational message that doesn't need web search
 _CONVERSATIONAL_PATTERNS = re.compile(
@@ -113,11 +116,20 @@ def gather_sources(query: str) -> list[SourceOut]:
     if not settings.source_lookup_enabled:
         return []
 
-    # Run Wikipedia and web search concurrently — both are network I/O
+    # Run Wikipedia and web search concurrently; bound each so a hung source
+    # can't stall the request (and, on a sync route, the shared threadpool).
+    timeout = settings.source_timeout_seconds
     with ThreadPoolExecutor(max_workers=2) as pool:
-        wiki_future = pool.submit(lookup_wikipedia, query, settings.wikipedia_results)
-        web_future = pool.submit(lookup_web, query, settings.web_search_results)
-        sources = [*wiki_future.result(), *web_future.result()]
+        futures = {
+            "wikipedia": pool.submit(lookup_wikipedia, query, settings.wikipedia_results),
+            "web": pool.submit(lookup_web, query, settings.web_search_results),
+        }
+        sources: list[SourceOut] = []
+        for name, future in futures.items():
+            try:
+                sources.extend(future.result(timeout=timeout))
+            except Exception as exc:  # noqa: BLE001 - a slow/failed source is non-fatal
+                logger.warning("source lookup '%s' failed or timed out: %s", name, exc)
 
     return _dedupe_sources(sources)
 
