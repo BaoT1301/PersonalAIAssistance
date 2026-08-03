@@ -31,9 +31,9 @@ SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def init_db() -> None:
-    from models import Document, DocumentChunk, Message, ResearchResult, ResearchSession, Source
+    from models import Document, DocumentChunk, Message, ResearchResult, ResearchSession, Source, User
 
-    _ = (Document, DocumentChunk, Message, ResearchResult, ResearchSession, Source)
+    _ = (Document, DocumentChunk, Message, ResearchResult, ResearchSession, Source, User)
     if not settings.auto_create_tables:
         return
     Base.metadata.create_all(bind=engine)

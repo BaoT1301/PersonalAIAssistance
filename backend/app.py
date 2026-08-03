@@ -16,6 +16,8 @@ import json
 from config import get_settings
 from database import check_database, database_type, get_db, init_db
 from schemas import (
+    AuthCredentials,
+    AuthResponse,
     ChatRequest,
     ChatResponse,
     DocumentCreate,
@@ -32,6 +34,13 @@ from schemas import (
     SessionDetail,
     SessionOut,
     SessionUpdate,
+)
+from services.auth import (
+    AuthError,
+    authenticate_user,
+    create_access_token,
+    identity_from_bearer,
+    register_user,
 )
 from services.documents import (
     add_document,
@@ -76,12 +85,17 @@ logger = logging.getLogger("fusionai.api")
 
 
 def get_workspace_id(request: Request) -> str:
-    # Gateway mode: when a shared secret is configured, ONLY a gateway that
+    """Resolve the caller's private data-owner id. Three modes, in priority order:
+    gateway (shared-secret), native JWT (username/password accounts), and the
+    legacy workspace header for open dev. Read live so tests/env changes apply."""
+    s = get_settings()
+
+    # 1. Gateway mode: when a shared secret is configured, ONLY a gateway that
     # presents the matching X-Gateway-Secret may call the API, and the identity
     # comes from the gateway-verified X-Fusion-User header (not client-trusted).
-    if settings.gateway_shared_secret:
+    if s.gateway_shared_secret:
         provided = request.headers.get("x-gateway-secret", "")
-        if not hmac.compare_digest(provided, settings.gateway_shared_secret):
+        if not hmac.compare_digest(provided, s.gateway_shared_secret):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Direct access is not allowed; go through the gateway")
         user = request.headers.get("x-fusion-user", "").strip()
         if not user:
@@ -90,10 +104,19 @@ def get_workspace_id(request: Request) -> str:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Identity is too long")
         return user
 
-    # Legacy/dev mode (no gateway): trust the workspace header directly.
-    workspace_id = request.headers.get("x-fusion-workspace-id", settings.default_workspace_id).strip()
+    # 2. Native auth: a Bearer JWT issued by /auth/login identifies the user; the
+    # user's id becomes their data-owner id, so their sessions/documents are
+    # private. When AUTH_REQUIRED is on, a valid token is mandatory.
+    identity = identity_from_bearer(request.headers.get("authorization"))
+    if identity:
+        return identity
+    if s.auth_required:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Please sign in to continue.")
+
+    # 3. Legacy/dev mode (no auth): trust the workspace header directly.
+    workspace_id = request.headers.get("x-fusion-workspace-id", s.default_workspace_id).strip()
     if not workspace_id:
-        workspace_id = settings.default_workspace_id
+        workspace_id = s.default_workspace_id
     if len(workspace_id) > 120:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Workspace id is too long")
     return workspace_id
@@ -226,6 +249,35 @@ def readiness_check(response: Response) -> ReadinessResponse:
         errors=errors if not ready else [],
         warnings=warnings,
     )
+
+
+# ─── Authentication (native username/password accounts) ────────────────────────
+
+
+@app.post("/auth/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
+def auth_register(payload: AuthCredentials, db: Session = Depends(get_db)) -> AuthResponse:
+    try:
+        user = register_user(db, payload.username, payload.password)
+    except AuthError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    return AuthResponse(token=create_access_token(user), username=user.username)
+
+
+@app.post("/auth/login", response_model=AuthResponse)
+def auth_login(payload: AuthCredentials, db: Session = Depends(get_db)) -> AuthResponse:
+    try:
+        user = authenticate_user(db, payload.username, payload.password)
+    except AuthError as exc:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail=str(exc)) from exc
+    return AuthResponse(token=create_access_token(user), username=user.username)
+
+
+@app.get("/auth/me")
+def auth_me(request: Request) -> dict[str, str]:
+    identity = identity_from_bearer(request.headers.get("authorization"))
+    if not identity:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Not authenticated")
+    return {"id": identity}
 
 
 @app.post("/api/research", response_model=ResearchResponse)

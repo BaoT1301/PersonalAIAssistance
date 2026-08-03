@@ -49,6 +49,13 @@ class Settings:
     # Empty (default) keeps the legacy behavior of trusting the workspace header.
     gateway_shared_secret: str = field(default_factory=lambda: os.getenv("GATEWAY_SHARED_SECRET", ""))
 
+    # Native authentication: this backend issues its own JWTs for username/password
+    # accounts. jwt_secret signs the tokens; auth_required=true makes a valid token
+    # mandatory (users must sign in to use the API — each user gets their own data).
+    jwt_secret: str = field(default_factory=lambda: os.getenv("JWT_SECRET", "dev-insecure-change-me"))
+    jwt_expire_minutes: int = field(default_factory=lambda: _env_int("JWT_EXPIRE_MINUTES", 10080))
+    auth_required: bool = field(default_factory=lambda: _env_bool("AUTH_REQUIRED", False))
+
     database_url: str = field(default_factory=lambda: os.getenv("DATABASE_URL", "sqlite:///./fusionai.db"))
     auto_create_tables: bool = field(
         default_factory=lambda: _env_bool(
@@ -127,6 +134,8 @@ class Settings:
                 errors.append("FRONTEND_ORIGINS must be explicit in production.")
             if self.auto_create_tables and not self.run_migrations_on_start:
                 warnings.append("AUTO_CREATE_TABLES is enabled in production; Alembic migrations are preferred.")
+            if self.auth_required and self.jwt_secret == "dev-insecure-change-me":
+                errors.append("JWT_SECRET must be set to a strong value when AUTH_REQUIRED is on in production.")
 
         return errors, warnings
 

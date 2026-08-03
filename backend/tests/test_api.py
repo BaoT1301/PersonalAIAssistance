@@ -17,6 +17,7 @@ os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB.as_posix()}"
 os.environ["REDIS_URL"] = ""
 os.environ["ENVIRONMENT"] = "test"
 os.environ["SOURCE_LOOKUP_ENABLED"] = "false"
+os.environ["AUTH_REQUIRED"] = "false"  # this suite scopes by workspace header, not tokens
 
 from app import app  # noqa: E402
 from schemas import SourceOut  # noqa: E402
